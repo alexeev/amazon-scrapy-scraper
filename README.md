@@ -51,7 +51,9 @@ amazon-scrapy-scraper/
 │   │   └── pdp.py               # composes one product record
 │   └── settings_baseline.py     # proxy-free local profile
 ├── tests/
-│   └── test_extraction.py
+│   ├── test_extraction.py       # unit tests over hand-written fixtures
+│   ├── test_corpus.py           # regression test over saved real pages
+│   └── corpus/                  # 35 saved Amazon PDPs + expected output
 ├── scrapy.cfg
 ├── pyproject.toml               # dependencies (single source of truth)
 ├── uv.lock                      # exact, resolved, committed

@@ -280,10 +280,16 @@ before and after.
   `scrapy startproject` scaffolding and are not enabled by either settings
   profile. `middlewares.py` was brought in line with Scrapy 2.19's template
   so that it would work if it were ever switched on.
-* **The offline corpus is not in the repository.** The 34 saved PDPs used for
-  §5.2 live outside version control, which makes the strongest regression
-  asset the least durable one. Committing a compressed corpus, or a script
-  that rebuilds it, would be worth doing before the next extraction change.
+* ~~The offline corpus is not in the repository.~~ **Resolved.** The 34
+  amazon.de pages and the 1 amazon.com page used for §5.2 are now committed
+  under `tests/corpus/`, together with a snapshot of their expected records
+  and `tests/test_corpus.py`, which compares the two on every test run. The
+  committed amazon.de snapshot is byte-identical to the pre-upgrade output, so
+  it records validated behaviour rather than merely current behaviour, and
+  re-introducing the `id()` defect from §5.2 now fails the suite by name.
+  Pages are passed through `tests/corpus/redact.py` first, which replaces the
+  per-session, per-request and correlation identifiers Amazon embeds; the
+  pages carry no account data, having been fetched signed out.
 
 ---
 

@@ -342,8 +342,21 @@ unit-carrying count label, the nested attribute tables that several selectors
 reach at once, and an empty page (which must yield a record, not an
 exception).
 
+`tests/test_corpus.py` — a regression test over `tests/corpus/`, 35 saved
+real PDPs (34 amazon.de, 1 amazon.com) with a committed snapshot of the record
+each one should produce. It compares field by field and names what moved. The
+amazon.de snapshot is byte-identical to the output of the pre-upgrade Python
+3.9.6 / Scrapy 2.13.4 runtime.
+
 ```bash
 uv run python -m unittest discover -s tests
+```
+
+When a change is meant to alter extraction output, regenerate the snapshot and
+review the diff as part of the change:
+
+```bash
+uv run python tests/test_corpus.py --update
 ```
 
 ---
