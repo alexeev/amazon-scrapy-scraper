@@ -49,11 +49,19 @@ amazon-scrapy-scraper/
 │   │   ├── marketplaces.py      # per-locale labels, currency, formats
 │   │   ├── blocks.py            # generic Amazon page structures
 │   │   └── pdp.py               # composes one product record
+│   ├── analysis/                # offline analysis of crawled records
+│   │   ├── evidence.py          # values that carry their own provenance
+│   │   ├── checks.py            # category-neutral validation
+│   │   ├── pasta.py             # dry-pasta classification and claims
+│   │   └── report.py            # evidence cards, comparison, ranking
 │   └── settings_baseline.py     # proxy-free local profile
 ├── tests/
 │   ├── test_extraction.py       # unit tests over hand-written fixtures
 │   ├── test_corpus.py           # regression test over saved real pages
-│   └── corpus/                  # 35 saved Amazon PDPs + expected output
+│   ├── test_analysis.py         # validation rules + the records behind them
+│   ├── corpus/                  # 35 saved Amazon PDPs + expected output
+│   └── cases/                   # 25 records each validation rule was built on
+├── ROADMAP.md                   # plan of record, with progress
 ├── scrapy.cfg
 ├── pyproject.toml               # dependencies (single source of truth)
 ├── uv.lock                      # exact, resolved, committed
@@ -180,6 +188,69 @@ SCRAPY_PROJECT=baseline scrapy crawl amazon_product \
 See **[EXTRACTION.md](EXTRACTION.md)** for the PDP structures investigated,
 the record schema, validation results and known limitations, and
 **[BASELINE.md](BASELINE.md)** for the original proxy-free crawl setup.
+
+### 3. **Analysis layer** (`amazon_scraper.analysis`)
+
+Runs **offline** over the JSONL a crawl produced. It fetches nothing, and
+answers a different question from the extractor: not "what does the page say"
+but "how much of that should we believe".
+
+```text
+records → generic checks → category knowledge → evidence cards
+          (checks.py)      (pasta.py)          (report.py)
+```
+
+A populated field is not a fact. Amazon's *structured* nutrition card states
+87.7 kcal/100 g for dry pasta on one record and 7 g of carbohydrate on
+another; a sixteen-pack of Garofalo Gragnano reports €62.56/kg because the
+vendor filed `Anzahl der Einheiten: 500 gramm` on a 16 × 500 g listing, and
+Amazon's own price-per-kilo agrees with it because it is computed from the
+same wrong row. So every value the analysis surfaces carries a status and the
+source text behind it:
+
+| Status | Meaning |
+|---|---|
+| `trusted` | survived every check that applies to it |
+| `disputed` | sources on the page contradict each other, or a check failed — shown with the contradiction, never ranked |
+| `unverified` | nothing contradicts it, nothing independent confirms it |
+| `unknown` | we do not know; distinct from "the page does not say" |
+| `not_claimed` | we searched every text field and the claim is not made — which is not the same as it being untrue |
+
+The split between `checks.py` and `pasta.py` is the point. A generic rule can
+prove that an energy figure and its own macronutrients contradict each other;
+only category knowledge can say which side is wrong. On `B0C3WCFKHT` the
+macronutrients are right and the vendor's kJ column is mistyped; on
+`B086K1MFSL` it is the other way round. Both are resolved correctly, and
+neither rule knows what pasta is.
+
+```bash
+# how much of a crawl is actually usable, and where it fails
+uv run python -m amazon_scraper.analysis summary data/products.jsonl
+
+# cheapest per kg among pastas that claim bronze-die extrusion
+uv run python -m amazon_scraper.analysis rank data/products.jsonl \
+    --require bronze_die --limit 15
+
+# one product's evidence card, or the same thing as JSON
+uv run python -m amazon_scraper.analysis card data/products.jsonl B08WJGD5Z5
+uv run python -m amazon_scraper.analysis card data/products.jsonl B08WJGD5Z5 --json
+
+# why one is a better buy than the other — and what cannot be compared
+uv run python -m amazon_scraper.analysis compare data/products.jsonl \
+    B08WJGD5Z5 B0DQ2N5HRW
+```
+
+Ranking is offered on **one axis at a time**, never as a composite score: a
+score would have to weigh a trusted price against an unverified protein figure
+and a claim nobody checked, and it could not answer "why is A better than B",
+which is the whole point. Over the 195-record Amazon.de validation set, 143 of
+161 dry pastas have at least one trusted comparison axis, 12 have a disputed
+price per kg and are shown with the contradiction rather than ranked, and 34
+records are classified out as not dry pasta — among them a toilet brush and a
+cookbook, both returned by pasta searches.
+
+See **[ROADMAP.md](ROADMAP.md)** for what this milestone was, what it
+deliberately left out, and what comes next.
 
 ---
 
