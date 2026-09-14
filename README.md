@@ -94,12 +94,39 @@ scrapy crawl amazon_product
 - Automatically paginates through search results
 
 ### 2. **Product Detail Spider** (`amazon_product`)
-- Crawls search results then scrapes individual product pages
-- Extracts comprehensive product information:
-  - Product name, price, stars, reviews
-  - Feature bullets, images, variant data
-- Handles multiple product pages simultaneously
-- Robust CSS selectors with fallbacks
+- Crawls search results, paginates, then scrapes individual product pages
+- Delegates PDP parsing to `amazon_scraper/extraction/`, which extracts:
+  - identity and lineage (ASIN, marketplace, search query/page/position)
+  - core data (title, brand, price, unit price, rating, availability, breadcrumbs)
+  - package data (item weight, pack count, normalized total quantity)
+  - content (feature bullets, description, important information, A+ content)
+  - food data (ingredients, allergens, nutrition normalized per 100 g)
+  - every key/value table preserved verbatim in `raw_tables`
+  - the full product image gallery
+- Records provenance per field, and distinguishes *absent* from *failed*
+- Works without a proxy or browser on amazon.de
+
+Run it against one or several queries (`;`-separated):
+
+```bash
+SCRAPY_PROJECT=baseline scrapy crawl amazon_product \
+  -a keyword="spaghetti hartweizen; penne rigate bio" \
+  -a domain="www.amazon.de" \
+  -a max_pages=2 \
+  -a max_products_per_query=65 \
+  -O data/products.jsonl
+```
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `keyword` | `spaghetti hartweizen` | one or more `;`-separated search queries |
+| `domain` | `www.amazon.de` | marketplace host |
+| `max_pages` | `2` | search result pages per query |
+| `max_products_per_query` | `0` (no cap) | caps PDP discovery per query |
+
+See **[EXTRACTION.md](EXTRACTION.md)** for the PDP structures investigated,
+the record schema, validation results and known limitations, and
+**[BASELINE.md](BASELINE.md)** for the original proxy-free crawl setup.
 
 ---
 
@@ -111,10 +138,36 @@ keyword,asin,url,ad,title,price,rating,rating_count,thumbnail_url
 ipad,B09G9FPHY6,https://www.amazon.com/dp/B09G9FPHY6,False,iPad (10th generation),$449.00,4.7 out of 5 stars,12,345,https://m.media-amazon.com/images/I/71...
 ```
 
-### Product Details (CSV)
-```csv
-name,price,stars,rating_count,feature_bullets,images,variant_data
-iPad (10th generation),$449.00,4.7 out of 5 stars,12,345,"['10.9-inch Liquid Retina display', 'A14 Bionic chip']",[...],{...}
+### Product Details (JSONL, abridged)
+```json
+{
+  "schema_version": 2,
+  "marketplace": "www.amazon.de",
+  "asin": "B0CPQ5HGC8",
+  "search_query": "penne rigate bio vollkorn",
+  "search_page": 1,
+  "search_position": 12,
+  "title": "Naturata Bio Dinkel-Vollkorn Lasagne-Platten, 250 g",
+  "brand": "Naturata",
+  "price": {"amount": 3.39, "currency": "EUR", "text": "3,39 €"},
+  "unit_price": {"amount": 13.56, "unit": "kg", "text": "13,56 € pro kg"},
+  "rating": {"value": 4.6, "count": 209},
+  "package": {"item_weight_base": 250.0, "item_count": 1,
+              "total_quantity_base": 250.0, "total_quantity_unit": "g",
+              "total_quantity_source": "unit_count"},
+  "food": {
+    "ingredients": {"text": "DINKEL-VOLLKORNMEHL** (eine WEIZENART) …",
+                    "source": "nutrition_card"},
+    "nutrition": {"source": "nutrition_card", "confidence": "high",
+                  "basis_text": "Pro 100g",
+                  "per_100g": {"energy_kcal": 345.0, "protein_g": 12.9,
+                               "carbohydrates_g": 63.5, "fat_g": 2.5}}
+  },
+  "raw_tables": {"Marke": "Naturata", "Artikelgewicht": "250 Gramm",
+                 "Herkunftsland": "Italien"},
+  "media": {"image_count": 7, "image_source": "color_images"},
+  "extraction": {"blocks_absent": [], "errors": []}
+}
 ```
 
 ---
