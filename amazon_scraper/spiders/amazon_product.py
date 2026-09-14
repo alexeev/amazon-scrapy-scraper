@@ -1,10 +1,17 @@
 """Amazon search -> pagination -> product detail page crawler.
 
-The crawl flow (search, pagination, ASIN discovery, dedupe, challenge
-detection) is unchanged from the validated baseline. What changed is the PDP
-stage: instead of reading a handful of selectors inline, it delegates to
-:mod:`amazon_scraper.extraction`, which returns a rich record and reports per
-block whether the data was present, absent or failed to parse.
+The crawl flow -- search, pagination, ASIN discovery, de-duplication, challenge
+detection, pacing -- is unchanged from the validated baseline. Two layers were
+added around it without touching it.
+
+PDP parsing delegates to :mod:`amazon_scraper.extraction`, which returns a rich
+record and reports per block whether the data was present, absent or failed to
+parse.
+
+Everything a crawl knows about itself now survives it (:mod:`amazon_scraper.run`):
+the run's identity and locale travel on every record, every sighting is written
+down *before* de-duplication can discard it, and the page each record came from
+is kept so a later extractor never has to ask Amazon twice.
 """
 
 import collections
@@ -12,9 +19,12 @@ import re
 from urllib.parse import unquote, urlencode, urlparse
 
 import scrapy
+from scrapy import signals
 
 from amazon_scraper.extraction.marketplaces import for_domain
 from amazon_scraper.extraction.pdp import PdpExtractor
+from amazon_scraper.extraction.text import clean, decode_entities
+from amazon_scraper.run import DEFAULT_RUN_ROOT, CrawlRun, acquisition_locale
 
 # Markers that identify an Amazon anti-bot challenge ("Robot Check" / CAPTCHA)
 # page. Amazon serves these with HTTP 200, so status alone proves nothing.
@@ -35,6 +45,36 @@ CHALLENGE_CSS_MARKERS = (
 
 ASIN_RE = re.compile(r'/(?:dp|gp/product)/([A-Z0-9]{10})')
 BARE_ASIN_RE = re.compile(r'[A-Z0-9]{10}')
+
+# The actual result list, as opposed to everything shaped like a result tile.
+# Measured on a live amazon.de search page: the spider's discovery selector
+# matches 82 nodes, of which 60 are the result grid and 22 are carousels and
+# ad slots, 12 of them with an empty data-asin. Rank among the grid is the
+# number that means "where a shopper saw it"; the other index is kept as-is so
+# discovery behaviour does not change.
+RESULT_GRID_CSS = 'div[data-component-type="s-search-result"]'
+
+# Sponsored placement. All three markers agreed on all 60 grid items of the
+# page they were measured on, so any one of them is enough and disagreement is
+# worth recording rather than resolving.
+SPONSORED_MARKERS = (
+    ('ad_holder', lambda node: 'AdHolder' in (node.attrib.get('class') or '')),
+    ('sponsored_label', lambda node: bool(node.css('[class*="sponsored-label"]'))),
+    ('sspa_link', lambda node: bool(node.css('a[href*="/sspa/click"]'))),
+)
+
+SEARCH_TITLE_CSS = ('[data-cy=title-recipe] h2 span::text', 'h2 span::text',
+                    'h2 a span::text')
+SEARCH_PRICE_CSS = ('.a-price .a-offscreen::text',)
+
+
+def first_of(node, css_selectors):
+    """Text of the first of `css_selectors` that matches inside `node`."""
+    for css in css_selectors:
+        value = node.css(css).get()
+        if value and value.strip():
+            return value
+    return ''
 
 # Coverage counters emitted into the crawl stats, so a validation run reports
 # extraction quality without a separate analysis pass. Each entry maps a stat
@@ -60,6 +100,7 @@ COVERAGE_CHECKS = (
     ('total_quantity', lambda r: r['package'].get('total_quantity_base')),
     ('images', lambda r: r['media'].get('images')),
     ('breadcrumbs', lambda r: r['breadcrumbs']),
+    ('variation', lambda r: r['variation'].get('values_by_asin')),
 )
 
 
@@ -104,8 +145,16 @@ class AmazonProductSpider(scrapy.Spider):
 
     name = "amazon_product"
 
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        spider = super().from_crawler(crawler, *args, **kwargs)
+        spider.begin_run()
+        crawler.signals.connect(spider.finish_run, signal=signals.spider_closed)
+        return spider
+
     def __init__(self, keyword='spaghetti hartweizen', domain='www.amazon.de',
-                 max_pages=2, max_products_per_query=0, *args, **kwargs):
+                 max_pages=2, max_products_per_query=0, keep_pages=1,
+                 *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.keywords = [k.strip() for k in str(keyword).split(';') if k.strip()]
@@ -127,9 +176,65 @@ class AmazonProductSpider(scrapy.Spider):
         # cutting the crawl mid-record the way CLOSESPIDER_ITEMCOUNT does.
         self.max_per_query = max(0, int(max_products_per_query))
 
-        self.extractor = PdpExtractor(for_domain(host))
+        self.profile = for_domain(host)
+        self.extractor = PdpExtractor(self.profile)
+        self.keep_pages = str(keep_pages).lower() not in ('0', 'false', 'no')
         self._queued_by_query = collections.Counter()
         self._seen_asins = set()
+        self.run = None
+
+    # -- run identity ------------------------------------------------------
+
+    def begin_run(self):
+        """Open this crawl's evidence directory, after checking the locale.
+
+        The locale check is the one thing here that can stop a crawl. Asking
+        amazon.de for English and then reading it with German label lists does
+        not fail anywhere: it silently produces records with an empty
+        ``attributes`` block beside a full ``raw_tables``, which looks like
+        Amazon publishing less rather than like a misconfiguration.
+        """
+        locale = acquisition_locale(self.settings, self.profile)
+        if locale['status'] == 'conflict':
+            # A plain error, not CloseSpider: CloseSpider does not print its
+            # own reason, and a misconfiguration nobody can read is barely
+            # better than the silent under-extraction it is guarding against.
+            raise ValueError(
+                f"Accept-Language {locale['accept_language']!r} asks "
+                f"{self.marketplace} for {locale['language']!r}, but its label "
+                f"vocabulary is {locale['expected_language']!r}. Extraction "
+                f"would under-report without failing. Fix "
+                f"DEFAULT_REQUEST_HEADERS, or crawl a marketplace whose "
+                f"profile matches.")
+        if locale['status'] == 'unset':
+            self.logger.warning(
+                'No Accept-Language configured: %s will answer in its own '
+                'default locale, which is not recorded as a choice. The '
+                'validated profile sets it explicitly.', self.marketplace)
+
+        self.run = CrawlRun(
+            root=self.settings.get('RUN_STORE', DEFAULT_RUN_ROOT),
+            spider=self.name,
+            marketplace=self.marketplace,
+            locale=locale,
+            arguments={'keyword': self.keywords, 'domain': self.marketplace,
+                       'max_pages': self.max_pages,
+                       'max_products_per_query': self.max_per_query,
+                       'keep_pages': self.keep_pages},
+            keep_pages=self.keep_pages,
+        ).open()
+        self.logger.info('Run %s -> %s (locale %s, %s)', self.run.run_id,
+                         self.run.directory, locale['language'],
+                         locale['status'])
+
+    def finish_run(self, spider, reason):
+        if self.run is not None:
+            self.run.close(stats=self.crawler.stats.get_stats(),
+                           finish_reason=reason)
+            self.logger.info(
+                'Run %s: %s discovery occurrences, %s pages retained in %s',
+                self.run.run_id, self.run.counts['discovery_occurrences'],
+                self.run.counts['pages_saved'], self.run.directory)
 
     # -- URL construction (single source of truth for the marketplace) ------
 
@@ -173,6 +278,8 @@ class AmazonProductSpider(scrapy.Spider):
             return
 
         search_products = response.css("div.s-result-item[data-asin]")
+        grid_rank = self.grid_ranks(response)
+        tree = response.selector.root.getroottree()
         found = 0
         for position, product in enumerate(search_products, start=1):
             asin = product.attrib.get('data-asin') or ''
@@ -186,7 +293,18 @@ class AmazonProductSpider(scrapy.Spider):
                 asin = match.group(1)
 
             found += 1
+
+            # Written down before anything can discard it. The same ASIN
+            # legitimately appears more than once -- on one live search page
+            # two ASINs appeared twice, each once organic and once sponsored --
+            # and every de-duplication below this line destroys that fact.
+            self.record_occurrence(product, asin=asin, keyword=keyword,
+                                   page=page, position=position,
+                                   grid_position=grid_rank.get(
+                                       tree.getpath(product.root)))
+
             if asin in self._seen_asins:
+                stats.inc_value('amazon/discovery/repeat_sighting')
                 continue
             if self.query_budget_spent(keyword_index):
                 continue
@@ -207,6 +325,58 @@ class AmazonProductSpider(scrapy.Spider):
                          page, keyword, found)
 
         yield from self.advance_search(response, keyword_index, page)
+
+    @staticmethod
+    def grid_ranks(response):
+        """``{element path: rank}`` for the real result grid.
+
+        The discovery selector deliberately stays as it was, so what gets
+        crawled does not change. But its index counts carousels and empty ad
+        tiles too, which is why "position 1" was missing from every query in
+        the last validation run. The grid rank is the one a shopper would
+        recognise; both are recorded and neither is guessed at.
+
+        Keyed by tree path rather than by ``id()``: lxml creates an element
+        proxy on demand and frees it once nothing refers to it, so proxy ids
+        get recycled and would silently match the wrong result. (The same trap
+        is documented in :func:`amazon_scraper.extraction.blocks.key_value_tables`.)
+        It happens to be safe here only because the discovery list holds every
+        proxy alive, which is an invariant nobody should have to preserve.
+        """
+        tree = response.selector.root.getroottree()
+        return {tree.getpath(node.root): rank for rank, node
+                in enumerate(response.css(RESULT_GRID_CSS), start=1)}
+
+    @staticmethod
+    def sponsored_markers(product):
+        """Which sponsorship markers this result carries, if any."""
+        return [name for name, test in SPONSORED_MARKERS if test(product)]
+
+    def record_occurrence(self, product, asin, keyword, page, position,
+                          grid_position):
+        """Write one sighting to the run's discovery log."""
+        if self.run is None:
+            return
+        markers = self.sponsored_markers(product)
+        price_text = decode_entities(clean(
+            first_of(product, SEARCH_PRICE_CSS)))
+        self.run.record_discovery({
+            'query': keyword,
+            'search_page': page,
+            'position': position,
+            'grid_position': grid_position,
+            'in_result_grid': grid_position is not None,
+            'asin': asin,
+            'sponsored': bool(markers),
+            'sponsored_markers': markers,
+            'result_title': clean(first_of(product, SEARCH_TITLE_CSS)),
+            'result_price_text': price_text,
+            'result_price_amount': self.profile.number(price_text),
+            'product_url': self.product_url(asin),
+        })
+        self.crawler.stats.inc_value('amazon/discovery/occurrences')
+        if markers:
+            self.crawler.stats.inc_value('amazon/discovery/sponsored')
 
     def advance_search(self, response, keyword_index, page):
         """Issue the next search request, if any.
@@ -262,9 +432,10 @@ class AmazonProductSpider(scrapy.Spider):
             self.logger.warning('No #productTitle on %s', response.url)
             return
 
+        asin = response.meta['asin']
         lineage = {
             'marketplace': self.marketplace,
-            'asin': response.meta['asin'],
+            'asin': asin,
             'product_url': response.url,
             'canonical_url': response.css(
                 'link[rel=canonical]::attr(href)').get() or response.url,
@@ -272,6 +443,13 @@ class AmazonProductSpider(scrapy.Spider):
             'search_page': response.meta['search_page'],
             'search_position': response.meta['search_position'],
         }
+        if self.run is not None:
+            # The run's identity and the locale that answered. A record whose
+            # locale is unknown cannot be compared with one crawled in another.
+            lineage.update(self.run.lineage())
+            # Kept before the record is built, so a later extractor can be run
+            # over this exact page without asking Amazon for it again.
+            self.run.save_page(asin, response.text)
 
         record = self.extractor.extract(response.selector, response.text, lineage)
 

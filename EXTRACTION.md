@@ -259,13 +259,14 @@ disappearing, so downstream consumers can index without guards.
 | Group | Keys |
 |---|---|
 | envelope | `schema_version`, `fetched_at` |
-| lineage | `marketplace`, `asin`, `product_url`, `canonical_url`, `search_query`, `search_page`, `search_position` |
+| lineage | `marketplace`, `asin`, `product_url`, `canonical_url`, `search_query`, `search_page`, `search_position`, `run_id`, `locale`, `accept_language` |
 | core | `title`, `brand`, `byline_text`, `brand_url`, `price{amount,currency,text}`, `unit_price{amount,unit,text}`, `rating{value,count,text,count_text}`, `availability`, `seller`, `breadcrumbs[]` |
 | package | `item_weight_*`, `package_weight_*`, `unit_count_*`, `volume_*`, `item_count`, `size_name`, `dimensions`, `total_quantity_base`, `total_quantity_unit`, `total_quantity_source` |
 | content | `feature_bullets[]`, `description`, `important_information[{heading,text}]`, `aplus{module_types,headings,text,text_length,images,tables}` |
 | food | `ingredients{text,source}`, `allergens[]`, `nutrition{source,confidence,basis_text,per_100g,rows,derived}` |
 | attributes | `attributes{}` (canonical), `raw_tables{}` (verbatim), `attribute_sources{}` |
 | media | `images[{url,variant,alt,thumb}]`, `primary_image`, `image_count`, `image_source` |
+| variation | `dimensions[]`, `display_labels{}`, `variation_values{}`, `values_by_asin{asin: [dimension values]}`, `current_asin`, `parent_asin`, `total_variations` — decoded verbatim, never interpreted |
 | diagnostics | `extraction{blocks_present[],blocks_absent[],errors[]}` |
 
 `nutrition.per_100g` uses canonical keys: `energy_kj`, `energy_kcal`,
@@ -858,9 +859,10 @@ BASELINE.md. It is not used by this pipeline.
    with a `Portionsgröße` attribute. Converting those to per-100 g would add
    a few percent and is cheap, but needs a sanity check against implausible
    results.
-3. **Variation / twister data.** `dimensionValuesDisplayData` is present on
-   ~70% of PDPs and was dropped in this iteration. It would let the
-   downstream layer group pack sizes of the same product.
+3. ~~**Variation / twister data.**~~ Done in schema v3: the twister matrix is
+   captured verbatim in `variation` (24/34 corpus pages). Interpreting it --
+   grouping pack sizes into offer families -- is deliberately left to a layer
+   that knows what it is comparing.
 4. **Review content.** Not extracted at all. Review text is a strong quality
    signal for food and would need a separate `/product-reviews/` request
    flow, which changes the crawl shape — a separate task.

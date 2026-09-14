@@ -284,3 +284,64 @@ def aplus_content(root):
         'images': images,
         'tables': tables,
     }
+
+# ---------------------------------------------------------------------------
+# Variations (twister)
+# ---------------------------------------------------------------------------
+
+# Amazon ships the variation matrix as a JS object literal next to the twister
+# widget. The object as a whole is *not* valid JSON -- at least one key is
+# rendered with a trailing comma (``"dimensionsDisplayType" : [ "swatch", ]``)
+# -- so each interesting key is decoded on its own instead.
+_TWISTER_KEYS = (
+    ('dimensions', 'dimensions'),
+    ('variation_values', 'variationValues'),
+    ('display_labels', 'variationDisplayLabels'),
+    ('values_by_asin', 'dimensionValuesDisplayData'),
+    ('current_asin', 'currentAsin'),
+    ('parent_asin', 'parentAsin'),
+    ('total_variations', 'num_total_variations'),
+)
+
+
+def _js_value(html, key, search_from=0):
+    """Decode the JSON value of ``"key" :`` in a JS object literal."""
+    pattern = re.compile(r'["\']%s["\']\s*:\s*' % re.escape(key))
+    match = pattern.search(html, search_from)
+    if not match:
+        return None
+    try:
+        value, _ = json.JSONDecoder().raw_decode(html, match.end())
+    except ValueError:
+        return None
+    return value
+
+
+def variation_data(html):
+    """The twister variation matrix, decoded but not interpreted.
+
+    Returns the sibling ASINs of a product family together with the dimension
+    values that distinguish them -- ``{"B0CH3LLJT5": ["500 g (5er Pack)",
+    "Penne Rigate Integrale"]}`` -- plus the dimension names and their display
+    labels, or ``None`` when the page has no twister.
+
+    Deliberately no interpretation: no guess about which dimension is a pack
+    size, no parsing of "500 g (5er Pack)" into a quantity, no grouping. Those
+    are decisions for a layer that knows what it is comparing. What matters
+    here is that the evidence stops being thrown away -- it is present on 24 of
+    the 35 corpus pages and it is the independent statement of pack size that
+    settles quantity disputes the attribute table causes.
+    """
+    anchor = html.find('dimensionValuesDisplayData')
+    if anchor < 0:
+        return None
+    # Work backwards over the twister literal, so a key that also appears
+    # elsewhere on the page (``parentAsin`` shows up in several widgets) is
+    # read from this object rather than the first one in the document.
+    start = max(0, anchor - 4000)
+    data = {}
+    for name, key in _TWISTER_KEYS:
+        value = _js_value(html, key, start)
+        if value not in (None, '', [], {}):
+            data[name] = value
+    return data or None

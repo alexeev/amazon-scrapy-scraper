@@ -10,8 +10,8 @@ item, because the reasoning is what makes the current order defensible.
 | | Milestone | Status |
 |---|---|---|
 | **R0** | Pasta V1 — evidence-backed comparison over existing records | **DONE** |
-| **R1** | Crawl provenance and evidence preservation | **NEXT** (gate on the next crawl) |
-| **R2** | Generic validation layer + published extraction contract | PLANNED |
+| **R1** | Crawl provenance and evidence preservation | **DONE** |
+| **R2** | Generic validation layer + published extraction contract | **NEXT** |
 | **R3** | Variation-aware product families | PLANNED |
 | **R4** | Amazon.com as a validated marketplace | DEFERRED |
 | **R5** | Reviews as an evidence source | DEFERRED |
@@ -144,8 +144,12 @@ Two findings worth carrying forward:
 
 ## R1 — Crawl provenance and evidence preservation
 
-**Status: NEXT — and this is a gate.** It must land before the next production
-crawl, because the evidence it captures cannot be recovered afterwards.
+**Status: DONE.** It was a gate on the next production crawl, and it landed
+before one ran.
+
+Shipped as `amazon_scraper/run.py` plus the spider wiring, with
+`tests/test_run.py` and the first saved search page in
+`tests/corpus/amazon_de_search/`.
 
 ### Outcome
 
@@ -178,10 +182,49 @@ variation blob.
 
 ### Done when
 
-A fresh three-query crawl produces a run manifest, a complete occurrence log
-in which one ASIN found under two queries appears twice, a locale field on
-every record, and an offline re-extraction from retained HTML with no network
-access.
+- [x] A fresh three-query crawl produces a run manifest.
+- [x] A complete occurrence log in which one ASIN found under two queries
+      appears twice.
+- [x] A locale field on every record.
+- [x] An offline re-extraction from retained HTML with no network access.
+
+### Measured on completion
+
+Verification crawl: 3 queries, 1 search page each, 10 products per query,
+Amazon.de, no proxy. 34 requests, 34 × HTTP 200, 0 retries, 0 challenges,
+`finish_reason: finished`.
+
+| | |
+|---|---|
+| Discovery occurrences | **213**, of **170** distinct ASINs |
+| Repeat sightings | **43 (20% of occurrences)** — 21 same-query pairs, 12 ASINs under more than one query |
+| Sponsored placements | **69 of 213 (32%)** of what a shopper is shown |
+| Outside the result grid | 33 of 213 (carousels and ad slots) |
+| PDPs fetched | 30 — fetching stayed de-duplicated |
+| Records with `run_id` and `locale` | 30/30 |
+| Pages retained | 30, 11.6 MB gzipped (≈387 KB each, as estimated) |
+| Offline re-extraction | **30/30 identical**, no network |
+| Variation matrix captured | 16/30 records; 24/34 corpus pages |
+
+Three findings worth carrying forward:
+
+- **A latent locale bug was already in the repository.** Scrapy ships
+  `Accept-Language: en` by default and the non-baseline settings profile never
+  overrode it, so every Amazon.de crawl on that profile asked Amazon for
+  English while reading the answer with German label lists. Nothing failed;
+  records would simply have carried an empty `attributes` block beside a full
+  `raw_tables`. The gate now refuses to start, with a message naming the fix.
+  Only the validated baseline profile was ever correct, and by accident of
+  having been written for amazon.de.
+- **The discovery selector was never the result list.** On a live search page
+  it matches 82 nodes, of which 60 are the result grid and 22 are carousels
+  and ad slots — 12 of those with an empty `data-asin`. That is why position 1
+  was missing from every query in the last validation run. Discovery
+  behaviour is unchanged; both the raw index and the grid rank are now
+  recorded, and the grid rank is the one that means anything.
+- **A third of placements are advertising.** Not actionable yet, but it is the
+  kind of fact that changes what "what does Amazon show for this query" means,
+  and it was previously unrecordable.
 
 ---
 
@@ -227,10 +270,14 @@ the "same pasta, sixteen ASINs" distortion disappears from rankings.
 
 ### Scope
 
-Interpret the raw blob into a family identity and a pack-size dimension; use
-it as an additional quantity-conflict resolver; decide **at this point, and
-not before** whether `DiscoveryOccurrence` / `Product` / `OfferFamily` need to
-become separately persisted entities.
+Interpret the variation blob R1 now captures into a family identity and a
+pack-size dimension, and use it as an additional quantity-conflict resolver —
+`"500 g (16er Pack)"` is the independent statement that settles the disputes
+R0 can only flag.
+
+Also the part of the discovery model R1 deliberately left alone: occurrences
+are now persisted separately from products, but nothing *joins* them. Build
+that join when there is a consumer for it, and not before.
 
 ### Explicitly out of scope
 
@@ -328,18 +375,18 @@ decision; none blocks R0.
   axis; V1 leads with raw material and claim evidence, and R3 is pulled
   forward.
 
-### E2 — Cross-query discovery overlap
+### E2 — Cross-query discovery overlap — **RESOLVED**
 
-- **Blocks:** whether the SearchHit/Product entity split belongs in R1 rather
-  than R3.
-- **Why unresolved:** dedupe happens before anything is recorded. Position-gap
-  analysis hints the overlap is small (12 gaps on the first query, which
-  cannot have cross-query dedupe, versus 15–16 on later ones) but cannot
-  measure it.
-- **Experiment:** re-run the same three queries with
-  `max_products_per_query=0`, logging every (query, page, position, ASIN)
-  before dedupe. ≈20 minutes of crawl.
-- **Threshold:** >10% repeat sightings → the entity split moves into R1.
+**43 of 213 sightings (20%) are repeats**, against a threshold of 10%. The
+earlier position-gap estimate was too low, because it could only see
+cross-query repeats and missed the larger source: the same ASIN listed twice
+on one page, once organic and once sponsored.
+
+Over the threshold, so the persistence split moved into R1 and is done —
+occurrences live in `discovery.jsonl` and are never collapsed, products live
+in the feed. What stays in R3 is the part with no consumer yet: a model that
+*joins* them, and offer families. The reasoning is the same one that put R0
+before R2 — do not model what nothing reads.
 
 ### E3 — Discovery coverage of the category
 

@@ -43,6 +43,7 @@ amazon-scrapy-scraper/
 │   ├── middlewares.py           
 │   ├── items.py                 
 │   ├── pipelines.py                       
+│   ├── run.py                   # run identity, provenance, page store
 │   └── settings.py                     
 │   ├── extraction/              # PDP extraction layer
 │   │   ├── text.py              # text / number primitives
@@ -59,8 +60,10 @@ amazon-scrapy-scraper/
 │   ├── test_extraction.py       # unit tests over hand-written fixtures
 │   ├── test_corpus.py           # regression test over saved real pages
 │   ├── test_analysis.py         # validation rules + the records behind them
-│   ├── corpus/                  # 35 saved Amazon PDPs + expected output
+│   ├── test_run.py              # provenance, locale, discovery, page store
+│   ├── corpus/                  # 35 saved PDPs + 1 search page + expected
 │   └── cases/                   # 25 records each validation rule was built on
+├── data/evidence/               # committed crawl evidence behind the roadmap
 ├── ROADMAP.md                   # plan of record, with progress
 ├── scrapy.cfg
 ├── pyproject.toml               # dependencies (single source of truth)
@@ -254,6 +257,54 @@ deliberately left out, and what comes next.
 
 ---
 
+## Crawl provenance
+
+Every crawl owns a directory of evidence about itself, next to the feed:
+
+```text
+data/runs/<run_id>/
+  manifest.json          arguments, locale, counts, stats, finish reason
+  discovery.jsonl        one line per sighting, before de-duplication
+  pages/<ASIN>.html.gz   the page each record was extracted from
+```
+
+`run_id` and `locale` also travel on every product record, so a record can
+always be traced back to the crawl and the language that produced it.
+
+**Discovery is recorded before de-duplication.** One ASIN is seen many times —
+under several queries, on several pages, and twice on one page, once organic
+and once sponsored. Fetching its detail page repeatedly is waste, so that
+stays de-duplicated; but the sightings are the answer to "what does a shopper
+actually see", and they used to be dropped before anything was written down.
+On the verification crawl, 213 sightings covered 170 ASINs — **20% of
+sightings are repeats**, and **32% of placements are sponsored**.
+
+**Pages are retained**, about 390 KB gzipped each, so a later extractor never
+has to ask Amazon twice. Turn it off with `-a keep_pages=0`. Re-extracting a
+whole run offline needs no network:
+
+```python
+from parsel import Selector
+from amazon_scraper import run
+from amazon_scraper.extraction import PdpExtractor, for_domain
+
+extractor = PdpExtractor(for_domain('www.amazon.de'))
+for asin, path in run.stored_pages('data/runs/<run_id>').items():
+    html = run.read_page(path)
+    record = extractor.extract(Selector(html), html, {'asin': asin})
+```
+
+**Locale is checked before the first request.** It used to be implicit — an
+HTTP header in one module, the label vocabulary chosen from the domain in
+another — and the two could disagree with no error at all, producing records
+with an empty `attributes` block beside a full `raw_tables`. They *did*
+disagree: Scrapy ships `Accept-Language: en`, which the non-baseline settings
+profile never overrode, so crawling amazon.de on that profile asked Amazon for
+English. A crawl whose locale contradicts its marketplace now refuses to
+start.
+
+---
+
 ## Example Output
 
 ### Search Results (CSV)
@@ -402,6 +453,14 @@ uv export --format requirements-txt --no-hashes
 3. On the ScrapeOps profile, check that the API key in
    `amazon_scraper/settings.py` is valid
 4. Try different search terms
+
+### `ValueError: Accept-Language ... asks www.amazon.de for 'en'`
+
+The crawl refused to start because the locale it would request contradicts the
+marketplace's label vocabulary, which would silently under-extract rather than
+fail. Use `SCRAPY_PROJECT=baseline`, which sets a German `Accept-Language`, or
+add one to `DEFAULT_REQUEST_HEADERS` in your settings profile. Scrapy's own
+default is `Accept-Language: en`, so this fires on the ScrapeOps profile.
 
 ### Environment Issues
 ```bash

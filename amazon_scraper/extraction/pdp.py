@@ -19,7 +19,10 @@ from . import blocks
 from .marketplaces import UNITS, VOLUME_UNITS
 from .text import clean, decode_entities, first_text, node_text, parse_quantity
 
-SCHEMA_VERSION = 2
+# 3 added `variation`: the twister matrix, decoded verbatim. Kept as raw
+# evidence rather than interpreted, so a later layer can decide what a pack
+# size means without another crawl.
+SCHEMA_VERSION = 3
 
 # Free-text nutrition is only trustworthy when a per-100 basis is stated
 # nearby; otherwise the number may be per serving or per pack.
@@ -94,6 +97,7 @@ class PdpExtractor:
             lambda: self._nutrition(sel, description, aplus, important,
                                     feature_bullets, raw_tables))
         media = log.run('media', lambda: self._media(sel, html), {})
+        variation = log.run('variation', lambda: blocks.variation_data(html))
         package = log.run(
             'package', lambda: self._package(attributes, title), {})
 
@@ -135,6 +139,7 @@ class PdpExtractor:
             'raw_tables': raw_tables,
             'attribute_sources': sources,
             'media': media,
+            'variation': variation or {},
             'extraction': log.as_dict(),
         })
         return record

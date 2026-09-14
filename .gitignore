@@ -40,6 +40,13 @@ logs/
 .env
 .env.local
 
-# Crawl output
-data/
+# Crawl output. Working output and the per-run page store stay out of git --
+# a run retains ~390 KB gzipped per PDP -- but the evidence a roadmap decision
+# rests on is committed, under data/evidence/.
+data/*
+!data/evidence/
+data/evidence/*
+!data/evidence/*.gz
+!data/evidence/*.json
+!data/evidence/*.md
 *.jsonl
