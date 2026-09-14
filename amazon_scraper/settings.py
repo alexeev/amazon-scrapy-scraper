@@ -5,6 +5,12 @@ NEWSPIDER_MODULE = 'amazon_scraper.spiders'
 
 ROBOTSTXT_OBEY = False
 
+# Scrapy 2.19 enables the RemoteControl extension by default, which serves an
+# HTTP endpoint that executes code inside the running crawl process. Nothing
+# in this project uses it, and the validated baseline never had it, so it
+# stays off rather than silently widening what a crawl exposes.
+REMOTE_CONTROL_ENABLED = False
+
 SCRAPEOPS_API_KEY = 'ScrapeOps.io API-KEY-HERE'
 
 SCRAPEOPS_PROXY_ENABLED = True

@@ -8,7 +8,7 @@ class AmazonSearchSpider(scrapy.Spider):
         'FEEDS': { 'data/%(name)s_%(time)s.csv': { 'format': 'csv',}}
         }
 
-    def start_requests(self):
+    async def start(self):
         keyword_list = ['ipad']
         for keyword in keyword_list:
             amazon_search_url = f'https://www.amazon.com/s?k={keyword}&page=1'

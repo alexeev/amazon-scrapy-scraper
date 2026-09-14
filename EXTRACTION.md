@@ -335,14 +335,15 @@ serving-size conversion, which is more than a profile entry. It is scoped in
 
 ### 2.7 Tests
 
-`tests/test_extraction.py` — 19 offline unit tests over fixtures modelled on
+`tests/test_extraction.py` — 24 offline unit tests over fixtures modelled on
 the real structures, including the `parseJSON` gallery blob, the malformed
 nutrition table, bidi-marked detail bullets, the mixed number formats, the
-unit-carrying count label, and an empty page (which must yield a record, not
-an exception).
+unit-carrying count label, the nested attribute tables that several selectors
+reach at once, and an empty page (which must yield a record, not an
+exception).
 
 ```bash
-.venv/bin/python -m unittest discover -s tests
+uv run python -m unittest discover -s tests
 ```
 
 ---

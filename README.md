@@ -44,12 +44,39 @@ amazon-scrapy-scraper/
 │   ├── items.py                 
 │   ├── pipelines.py                       
 │   └── settings.py                     
-├── scrapy.cfg                    
-├── requirements.txt              
-├── .gitignore                    
-├── LICENSE                      
-└── README.md                   
+│   ├── extraction/              # PDP extraction layer
+│   │   ├── text.py              # text / number primitives
+│   │   ├── marketplaces.py      # per-locale labels, currency, formats
+│   │   ├── blocks.py            # generic Amazon page structures
+│   │   └── pdp.py               # composes one product record
+│   └── settings_baseline.py     # proxy-free local profile
+├── tests/
+│   └── test_extraction.py
+├── scrapy.cfg
+├── pyproject.toml               # dependencies (single source of truth)
+├── uv.lock                      # exact, resolved, committed
+├── .python-version              # CPython version for uv
+├── .gitignore
+├── LICENSE
+└── README.md
 ```
+
+---
+
+## Runtime
+
+| | |
+|---|---|
+| Python | CPython 3.14 (pinned in `.python-version`) |
+| Scrapy | 2.19.x |
+| Environment manager | [uv](https://docs.astral.sh/uv/) |
+| Dependency source of truth | `pyproject.toml` + `uv.lock` |
+
+The system Python is never used. `uv` downloads and manages the interpreter
+itself, so a clean machine needs nothing but `uv`.
+
+See **[MIGRATION.md](MIGRATION.md)** for how the project moved here from
+Python 3.9 / Scrapy 2.13, and what was verified in the process.
 
 ---
 
@@ -58,27 +85,51 @@ amazon-scrapy-scraper/
 ```bash
 git clone https://github.com/Simple-Python-Scrapy-Scrapers/amazon-scrapy-scraper.git
 cd amazon-scrapy-scraper
-
-# Create and activate virtual environment
-python -m venv .venv
-.venv\Scripts\Activate.ps1  # Windows PowerShell
-# source .venv/bin/activate  # macOS/Linux
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure API key in amazon_scraper/settings.py:
-# SCRAPEOPS_API_KEY = 'YOUR_SCRAPEOPS_API_KEY'
-
-# Run the spiders:
-cd amazon_scraper
-
-# 1. Search for products
-scrapy crawl amazon_search
-
-# 2. Get detailed product information
-scrapy crawl amazon_product
 ```
+
+Install uv once, if it is not already present:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Create the environment. This installs CPython 3.14 if needed and resolves
+every dependency to the exact versions in `uv.lock`:
+
+```bash
+uv sync
+```
+
+Run the tests:
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
+Run the crawler. `SCRAPY_PROJECT=baseline` selects the proxy-free local
+profile — the validated one, and the one to use unless you have a ScrapeOps
+key:
+
+```bash
+SCRAPY_PROJECT=baseline uv run scrapy crawl amazon_product -a keyword="spaghetti hartweizen" -a domain="www.amazon.de" -a max_pages=2 -O data/products.jsonl
+```
+
+There is no `activate` step and no `pip install`: `uv run` resolves the
+environment before every command, so it cannot silently drift from the lock.
+
+### Optional: ScrapeOps proxy profile
+
+The default settings module (`amazon_scraper.settings`, i.e. no
+`SCRAPY_PROJECT`) routes traffic through ScrapeOps and needs both an API key
+and two extra packages:
+
+```bash
+uv sync --extra scrapeops
+```
+
+Then set `SCRAPEOPS_API_KEY` in `amazon_scraper/settings.py`. This profile is
+not part of the validated baseline and has not been exercised since the
+upgrade.
 
 ---
 
@@ -177,14 +228,19 @@ ipad,B09G9FPHY6,https://www.amazon.com/dp/B09G9FPHY6,False,iPad (10th generation
 ### Customizing Keywords
 Edit the spider files to change search terms:
 
+For `amazon_product`, pass `-a keyword="one; two; three"` — no code change
+needed. `amazon_search` still carries its keyword list inline:
+
 ```python
-# In amazon_scraper/spiders/amazon_search.py or amazon_product.py
-def start_requests(self):
+# In amazon_scraper/spiders/amazon_search.py
+async def start(self):
     keyword_list = ['your', 'keywords', 'here']
     for keyword in keyword_list:
         amazon_search_url = f'https://www.amazon.com/s?k={keyword}&page=1'
         yield scrapy.Request(url=amazon_search_url, callback=self.parse_search_results, meta={'keyword': keyword, 'page': 1})
 ```
+
+(`start()` replaced `start_requests()`, which Scrapy removed in 2.16.)
 
 ### Output Configuration
 The spiders automatically save to CSV files in the `amazon_scraper/data/` directory:
@@ -239,39 +295,54 @@ In Pipeline
 
 ## Built With
 
-- Scrapy (Python)
-- ScrapeOps Proxy SDK + Monitoring SDK
+- Scrapy 2.19 on CPython 3.14, managed with uv
+- ScrapeOps Proxy SDK + Monitoring SDK (optional)
 - Based on `python-scrapy-playbook/amazon-python-scrapy-scraper`
 
 ---
 
 ## 📚 Dependencies
 
-- **scrapy**: Web scraping framework
-- **scrapeops-scrapy-proxy-sdk**: Proxy rotation and geolocation
-- **scrapeops-scrapy**: Monitoring and analytics
+Declared in `pyproject.toml`, locked in `uv.lock`:
+
+- **scrapy** (`>=2.19.0,<2.20`): web scraping framework — the only required
+  dependency; `parsel`, `lxml` and `twisted` come with it
+
+Optional, in the `scrapeops` extra, for the non-baseline settings profile:
+
+- **scrapeops-scrapy-proxy-sdk**: proxy rotation and geolocation
+- **scrapeops-scrapy**: monitoring and analytics
+
+To hand the dependency set to a tool that only speaks pip, export it rather
+than maintaining a second list:
+
+```bash
+uv export --format requirements-txt --no-hashes
+```
 
 ## 🆘 Troubleshooting
 
 ### No Products Found
-1. Check your ScrapeOps API key is valid in `amazon_scraper/settings.py`
-2. Run with debug logging: `scrapy crawl amazon_search -L DEBUG`
-3. Try different search terms
+1. Run with debug logging: `SCRAPY_PROJECT=baseline uv run scrapy crawl amazon_product -L DEBUG`
+2. Check the `amazon/challenge/*` stats at the end of the run — a non-zero
+   count means Amazon served a Robot Check rather than a page
+3. On the ScrapeOps profile, check that the API key in
+   `amazon_scraper/settings.py` is valid
+4. Try different search terms
 
-### Virtual Environment Issues
+### Environment Issues
 ```bash
-# Ensure virtual environment is activated
-.venv\Scripts\Activate.ps1  # Windows
-# source .venv/bin/activate  # macOS/Linux
-
-# Reinstall dependencies if needed
-pip install -r requirements.txt
+# Rebuild the environment from the lock, discarding anything stray
+uv sync --reinstall
 ```
 
-### Permission Errors (Windows PowerShell)
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
+`uv run` recreates `.venv` whenever it does not match `uv.lock`, so an
+out-of-date environment is not a failure mode you should have to think about.
+
+### `ModuleNotFoundError: scrapeops_scrapy`
+You ran without `SCRAPY_PROJECT=baseline`, so Scrapy loaded the ScrapeOps
+profile. Either prefix the command with `SCRAPY_PROJECT=baseline`, or install
+the extra with `uv sync --extra scrapeops`.
 
 ---
 

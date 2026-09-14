@@ -45,15 +45,18 @@ def key_value_tables(root, css_selectors=KV_TABLE_CSS):
     decides precedence, and knowing that two containers agreed is useful.
     """
     pairs = []
-    seen_tables = set()
+    # The same <table> is reachable through several of the selectors above;
+    # identity-dedupe so values are not counted twice. The elements are kept
+    # in a list rather than reduced to id() values: lxml builds an element
+    # proxy on demand and frees it once nothing refers to it, so id() values
+    # of released proxies get recycled and would collide with unrelated
+    # tables. Holding the proxies keeps their identity meaningful.
+    seen_tables = []
     for css in css_selectors:
         for table in root.css(css):
-            # The same <table> is reachable through several of the selectors
-            # above; identity-dedupe so values are not counted twice.
-            key = id(table.root)
-            if key in seen_tables:
+            if any(table.root is seen for seen in seen_tables):
                 continue
-            seen_tables.add(key)
+            seen_tables.append(table.root)
             for row in table.css('tr'):
                 cells = row.xpath('./th | ./td')
                 if len(cells) != 2:

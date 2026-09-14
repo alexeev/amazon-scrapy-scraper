@@ -95,9 +95,11 @@ class AmazonProductSpider(scrapy.Spider):
             -O data/products.jsonl
 
     ``keyword`` accepts several queries separated by ``;``. Queries are
-    crawled one at a time: only one search request is ever outstanding, which
-    keeps the ``/s?`` request rate close to the pattern the baseline
-    validated.
+    crawled one at a time: :meth:`start` seeds a single search request and
+    every further one is yielded from :meth:`advance_search` after the
+    previous search response has been parsed, so only one search request is
+    ever outstanding. That keeps the ``/s?`` request rate close to the
+    pattern the baseline validated, independently of scheduler behaviour.
     """
 
     name = "amazon_product"
@@ -153,7 +155,7 @@ class AmazonProductSpider(scrapy.Spider):
 
     # -- Crawl -------------------------------------------------------------
 
-    def start_requests(self):
+    async def start(self):
         yield self.search_request(0, 1)
 
     def discover_product_urls(self, response):

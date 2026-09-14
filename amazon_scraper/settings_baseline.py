@@ -3,8 +3,8 @@ Baseline settings for local, proxy-free Amazon crawls.
 
 Overlays the upstream project settings (``amazon_scraper.settings``) and:
 
-* disables the ScrapeOps proxy / monitor / retry integrations, so no API key
-  is required;
+* disables the ScrapeOps proxy / monitor / retry integrations, so neither an
+  API key nor the ScrapeOps packages are required;
 * restores Scrapy's own RetryMiddleware;
 * applies a deliberately slow, single-threaded crawl profile suitable for
   running from a normal home/office connection without a proxy.
@@ -14,22 +14,27 @@ stays available for later runs.
 
 Select this module with::
 
-    SCRAPY_PROJECT=baseline scrapy crawl ...
+    SCRAPY_PROJECT=baseline uv run scrapy crawl ...
 """
 
 from amazon_scraper.settings import *  # noqa: F401,F403
 
 # --- ScrapeOps off ---------------------------------------------------------
+# These dictionaries replace, rather than extend, the ones in ``settings``, so
+# the ScrapeOps components are gone simply by not being named here.
+#
+# Naming them with a ``None`` priority, which is how this module used to switch
+# them off, is no longer an option: since Scrapy 2.15 every key of a component
+# priority dictionary is imported while the dictionary is normalised, so
+# mentioning a component -- even to disable it -- makes its package a hard
+# requirement. This profile does not install ScrapeOps, so it must not name it.
 SCRAPEOPS_PROXY_ENABLED = False
 
-EXTENSIONS = {
-    'scrapeops_scrapy.extension.ScrapeOpsMonitor': None,
-}
+EXTENSIONS = {}
 
 DOWNLOADER_MIDDLEWARES = {
-    'scrapeops_scrapy.middleware.retry.RetryMiddleware': None,
-    'scrapeops_scrapy_proxy_sdk.scrapeops_scrapy_proxy_sdk.ScrapeOpsScrapyProxySdk': None,
-    # Re-enable Scrapy's stock retry middleware (upstream switched it off).
+    # Restore Scrapy's stock retry middleware at its default position;
+    # ``settings`` switches it off in favour of the ScrapeOps one.
     'scrapy.downloadermiddlewares.retry.RetryMiddleware': 550,
 }
 
@@ -38,7 +43,10 @@ CONCURRENT_REQUESTS = 1
 CONCURRENT_REQUESTS_PER_DOMAIN = 1
 
 DOWNLOAD_DELAY = 2.0
-RANDOMIZE_DOWNLOAD_DELAY = True
+# Scrapy 2.19 replaced the RANDOMIZE_DOWNLOAD_DELAY toggle with an explicit
+# magnitude. 0.5 is what the old toggle meant, so the delay still varies
+# uniformly between 0.5x and 1.5x of DOWNLOAD_DELAY, as during validation.
+DOWNLOAD_DELAY_JITTER = 0.5
 
 AUTOTHROTTLE_ENABLED = True
 AUTOTHROTTLE_START_DELAY = 2

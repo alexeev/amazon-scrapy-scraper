@@ -1,0 +1,27 @@
+[project]
+name = "amazon-scrapy-scraper"
+version = "0.2.0"
+description = "Amazon product-research crawler: search -> pagination -> PDP -> JSONL"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    # 2.19.x is the validated runtime. Scrapy's minor releases regularly move
+    # defaults (the scheduler priority queue, the download handler, the
+    # start-request API), so the upper bound is deliberate: bumping it is a
+    # decision that deserves its own regression run.
+    "scrapy>=2.19.0,<2.20",
+]
+
+[project.optional-dependencies]
+# Upstream ScrapeOps proxy/monitoring integration, used only by the default
+# `amazon_scraper.settings` profile. The validated local profile
+# (SCRAPY_PROJECT=baseline) is proxy-free and does not need these.
+scrapeops = [
+    "scrapeops-scrapy>=0.6.1",
+    "scrapeops-scrapy-proxy-sdk>=1.1",
+]
+
+[tool.uv]
+# This repository is a Scrapy project, not a distributable library: there is
+# nothing to build or publish, so uv manages the environment and the lock
+# without installing `amazon_scraper` as a package.
+package = false

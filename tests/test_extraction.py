@@ -148,6 +148,48 @@ TABLE_HTML = """
 """
 
 
+class KeyValueTables(unittest.TestCase):
+    """amazon.de reaches the same <table> through several of the selectors in
+    ``KV_TABLE_CSS``: #prodDetails wraps the tables that the more specific ids
+    also match. Each table must be read exactly once, and no table may be lost
+    because another one was already read."""
+
+    NESTED_TABLES = """
+    <div id="prodDetails">
+      <table id="productDetails_techSpec_section_1">
+        <tr><th>Marke</th><td>Naturata</td></tr>
+        <tr><th>Artikelgewicht</th><td>500 Gramm</td></tr>
+      </table>
+      <table id="productDetails_detailBullets_sections1">
+        <tr><th>ASIN</th><td>B000000001</td></tr>
+        <tr><th>Im Angebot von Amazon.de seit</th><td>18. Oktober 2023</td></tr>
+      </table>
+    </div>
+    """
+
+    def test_every_table_is_read_exactly_once(self):
+        pairs = blocks.key_value_tables(Selector(self.NESTED_TABLES))
+        self.assertEqual(pairs, [
+            ('Marke', 'Naturata'),
+            ('Artikelgewicht', '500 Gramm'),
+            ('ASIN', 'B000000001'),
+            ('Im Angebot von Amazon.de seit', '18. Oktober 2023'),
+        ])
+
+    def test_result_does_not_depend_on_object_lifetimes(self):
+        # Deduplication used to key on id(element). lxml frees an element
+        # proxy once nothing refers to it and CPython then reuses the address,
+        # so an unrelated table could inherit a seen id and be dropped. Forcing
+        # collections between selector builds reproduced that.
+        import gc
+
+        expected = blocks.key_value_tables(Selector(self.NESTED_TABLES))
+        for _ in range(20):
+            selector = Selector(self.NESTED_TABLES)
+            gc.collect()
+            self.assertEqual(blocks.key_value_tables(selector), expected)
+
+
 class PdpComposition(unittest.TestCase):
 
     def extract(self, html):

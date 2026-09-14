@@ -1,5 +1,14 @@
 # Amazon.de baseline crawl — setup, commands and smoke-test report
 
+> **Historical record.** This documents the original baseline validation of
+> 2026-09-14, on **Python 3.9.6 / Scrapy 2.13.4**, which is no longer the
+> project runtime. The commands in §1–§4 are kept as written so the reported
+> results stay reproducible in context; for how to set up and run the project
+> today see [README.md](README.md), and for what the move to Python 3.14 /
+> Scrapy 2.19 changed — and what was re-verified against these numbers — see
+> [MIGRATION.md](MIGRATION.md). The crawl behaviour described here, including
+> the search pacing, is unchanged.
+
 Scope: verify that this existing Scrapy project can traverse
 `search → pagination → PDP → JSONL` on **amazon.de**, from a local machine,
 with no proxy and no ScrapeOps account. This is a smoke test, not the final
@@ -158,6 +167,8 @@ amazon.com leakage           none
   urllib3/LibreSSL on macOS system Python, and a Scrapy 2.13 deprecation of
   `start_requests()` in favour of `async def start()`. `start_requests()`
   still works and keeps compatibility with the pinned `scrapy>=2.5.0`.
+  *(Both are gone as of the 2.19 migration: Scrapy 2.16 removed
+  `start_requests()` outright, and the system Python is no longer used.)*
 
 ---
 
