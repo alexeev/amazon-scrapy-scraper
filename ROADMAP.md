@@ -11,8 +11,8 @@ item, because the reasoning is what makes the current order defensible.
 |---|---|---|
 | **R0** | Pasta V1 — evidence-backed comparison over existing records | **DONE** |
 | **R1** | Crawl provenance and evidence preservation | **DONE** |
-| **R2** | Generic validation layer + published extraction contract | **NEXT** |
-| **R3** | Variation-aware product families | PLANNED |
+| **R2** | Generic validation layer + published extraction contract | PLANNED (held: still only one consumer) |
+| **R3** | Variation-aware product families | **DONE** (one criterion unmet — see below) |
 | **R4** | Amazon.com as a validated marketplace | DEFERRED |
 | **R5** | Reviews as an evidence source | DEFERRED |
 
@@ -230,7 +230,14 @@ Three findings worth carrying forward:
 
 ## R2 — Generic validation layer + published extraction contract
 
-**Status: PLANNED**
+**Status: PLANNED — held deliberately, and R3 goes first.**
+
+The milestone's own premise is that rules get promoted once a *second*
+consumer has exercised them. There is still only one. Promoting now would
+repeat the mistake that put R0 ahead of the original P0: freezing an interface
+around a single caller and calling it general. R3 both adds a second kind of
+consumer for the quantity rules and feeds them a new evidence source, which is
+the exercise R2 is waiting for.
 
 ### Outcome
 
@@ -261,7 +268,11 @@ rules, and the corpus regression test covers validation output.
 
 ## R3 — Variation-aware product families
 
-**Status: PLANNED** — blocked on R1 capturing the raw variation blob.
+**Status: DONE**, with one of its two completion criteria **not met** and the
+reason recorded rather than worked around.
+
+Shipped as `amazon_scraper/analysis/variation.py` plus the reconciler and
+report wiring, with `tests/test_variation.py`.
 
 ### Outcome
 
@@ -285,8 +296,62 @@ Crawling sibling ASINs that were never discovered.
 
 ### Done when
 
-Variants collapse into one comparison row with per-pack price per kg, and
-family evidence resolves at least the quantity conflicts R0 could only flag.
+- [x] Variants collapse into one comparison row with per-pack price per kg.
+- [ ] **Not met:** family evidence resolves at least the quantity conflicts R0
+      could only flag. Seven of R0's eight flagged ASINs reappeared in the
+      verification crawl and **none of them has a variation matrix at all**.
+      The evidence this milestone was meant to apply does not exist on those
+      pages. No amount of further work on variations changes that, so the
+      criterion is retired rather than chased.
+
+### Measured on completion
+
+Re-ran the original three-query validation crawl under schema v3: 195 records,
+201 requests, 201 × HTTP 200, 0 retries, 0 challenges, `finished`.
+
+| | |
+|---|---|
+| Variation matrix present | **68/195 (35%)** |
+| Dry pastas → offers | 165 listings → **159 offers**; 6 offers hold more than one crawled pack size |
+| Pack quantity improved | **22 unverified → trusted**, **2 unverified → disputed** (24 records, 12%) |
+| Only pack-size label on the page | 26 records |
+| R0's flagged conflicts resolved | **0 of 7** — none carries a matrix |
+
+Four findings.
+
+- **The corpus overstated how common variation data is, and I had used that
+  figure to justify this milestone.** "Present on 24 of 35 corpus pages" is
+  71%; on records from an ordinary search crawl it is **35%**. The corpus
+  pages were chosen for layout diversity, which is exactly the bias that makes
+  them a bad basis for a frequency claim. Checked against the retained pages,
+  not assumed: where the matrix is missing it is genuinely absent from the
+  HTML, not missed by the extractor.
+- **The premise in the original review was wrong.** "Sixteen ASINs of the same
+  Garofalo pasta crowd the ranking" — those listings are different *shapes*
+  under one parent, not pack sizes. Amazon files spaghetti, penne and fusilli
+  under a single family, so collapsing by family would have merged different
+  products. Grouping is by size dimension only, and the corpus proves that is
+  necessary rather than fastidious.
+- **The real payoff was the quantity side, not the comparison side.** One case
+  matters on its own: `B0DM21MLWV` (Barilla Integrale) was shown by R0 at
+  **€38.56/kg** as an unverified but plausible price, because Amazon's
+  attribute table says 1 kg and its own unit price is quoted *per piece*. The
+  variation matrix says `10kg`. The real price is **€3.86/kg** — a tenfold
+  error on a flagship brand, invisible to every source R0 had.
+- **Price coverage is volatile between crawls.** The September run had a price
+  on 195/195 records; this one on 141/195. Investigated rather than assumed:
+  no price payload keyed to the main ASIN exists anywhere in those responses,
+  and the discovery log shows search did not price them either. They had no
+  purchasable offer at crawl time. The extractor is right to return nothing,
+  and §1.4's finding — that no high-value field needs browser execution —
+  still holds.
+
+### Retired from scope
+
+The discovery/product *join* stays unbuilt. R1 persists occurrences separately
+and nothing reads them yet; this milestone did not create a reader, so the
+reasoning that put R0 ahead of P0 applies unchanged — do not model what
+nothing consumes.
 
 ---
 

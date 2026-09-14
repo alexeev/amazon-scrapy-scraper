@@ -12,6 +12,7 @@ So the unit of output is an evidence card, and the unit of comparison is a
 difference with the quote behind it. Missing data is shown as missing.
 """
 
+from . import variation
 from .evidence import DISPUTED, NOT_CLAIMED, TRUSTED, UNKNOWN, UNVERIFIED
 from .pasta import CLAIMS, is_pasta
 
@@ -91,6 +92,16 @@ def card_text(card):
         lambda keys: ', '.join(MATERIAL_LABELS.get(k, k) for k in keys))
     lines += _value_lines('Price per kg', card['price_per_kg'], _number)
     lines += _value_lines('Pack size', card['quantity'], _number)
+    if card.get('size_label'):
+        lines.append(f'  {"Sold as":<14} {card["size_label"]}')
+    siblings = [asin for asin in card.get('siblings') or []
+                if asin != card['asin']]
+    if siblings:
+        lines += _wrap(
+            f'Amazon lists {len(siblings)} other listing'
+            f'{"s" if len(siblings) > 1 else ""} in the same product family: '
+            + ', '.join(siblings[:6]) + ('…' if len(siblings) > 6 else ''),
+            indent=' ' * 4)
 
     for key in ('protein_g', 'energy_kcal', 'fiber_g'):
         value = card['nutrition'].get(key)
@@ -157,6 +168,32 @@ def compare_text(left, right):
                          f'({card["category"].notes[0] if card["category"].notes else ""}).'
                          ' Nothing to compare.')
             return '\n'.join(lines)
+
+    # Amazon's own variation matrix says whether these are two products or one
+    # product in two boxes. Comparing "quality" between pack sizes of the same
+    # pasta is a research error, and a silent one: everything except the price
+    # comes out identical, which reads like agreement rather than tautology.
+    if left.get('offer') and left['offer'] == right.get('offer'):
+        lines += _wrap('Amazon lists these as the same product in different '
+                       'pack sizes, not as two products.', indent='  ')
+        lines.append('')
+        for card, name in ((left, 'A'), (right, 'B')):
+            price = card['price_per_kg']
+            shown = (f'{price.value:g} {price.unit} [{MARK[price.status]}]'
+                     if price.known else 'price per kg unknown')
+            lines.append(f'    {name}  {pack_size(card):<22} {shown}')
+        cheaper = min((card for card in (left, right)
+                       if card['price_per_kg'].usable),
+                      key=lambda card: card['price_per_kg'].value, default=None)
+        lines.append('')
+        lines += _wrap(
+            f'Only the pack size differs, so the question is price per kilo, '
+            f'not quality: {"A" if cheaper is left else "B"} is the cheaper '
+            f'pack.' if cheaper else
+            'Only the pack size differs, and neither price per kilo survived '
+            'validation, so there is nothing to choose between them here.',
+            indent='  ')
+        return '\n'.join(lines)
 
     differences, blocked = [], []
 
@@ -242,31 +279,67 @@ def compare_text(left, right):
 # Ranking and corpus summary
 # ---------------------------------------------------------------------------
 
+def pack_size(card):
+    """A readable pack size for a card, preferring what Amazon labelled it."""
+    if card.get('size_label'):
+        return card['size_label']
+    quantity = card['quantity']
+    if not quantity.known:
+        return '?'
+    grams = quantity.value
+    return f'{grams / 1000:g} kg' if grams >= 1000 else f'{grams:g} g'
+
+
 def rank_text(cards, axis='price_per_kg', require=(), limit=20):
-    """Cheapest-first within one axis, over products that survived validation.
+    """Cheapest-first within one axis, one row per offer.
 
     Ranking is offered on a single axis the user names, never on a composite:
     a composite would have to weigh a trusted price against an unverified
     protein figure and a claim nobody checked.
+
+    Rows are *offers*, not ASINs: when two listings are the same product in
+    different boxes, the cheapest pack wins the row and the rest are named
+    under it, so choosing a different size stays possible. On a search-derived
+    crawl this folds only a few rows -- most families surface once -- but the
+    rows it folds are ones where the per-kilo prices differ, sometimes sharply.
     """
     pasta = [card for card in cards if is_pasta(card)]
     wanted = [card for card in pasta
               if all(card['claims'].get(key) is not None
                      and card['claims'][key].status == TRUSTED for key in require)]
-    usable = [card for card in wanted if card[axis].usable]
-    dropped = [card for card in wanted if not card[axis].usable]
+
+    groups = variation.group_offers(wanted)
+    ranked, dropped = [], []
+    for _, members in groups:
+        usable = [card for card in members if card[axis].usable]
+        if usable:
+            usable.sort(key=lambda card: card[axis].value)
+            ranked.append(usable)
+        else:
+            dropped.extend(members)
+
+    ranked.sort(key=lambda members: members[0][axis].value)
+    collapsed = sum(len(members) - 1 for members in ranked)
 
     lines = [f'Ranked by {axis}'
              + (f', requiring {", ".join(require)}' if require else ''),
              f'{len(pasta)} dry pastas · {len(wanted)} match the filter · '
-             f'{len(usable)} have a trusted {axis}', '']
-    for position, card in enumerate(sorted(usable, key=lambda c: c[axis].value)[:limit],
-                                    start=1):
-        mats = (', '.join(MATERIAL_LABELS.get(k, k)
-                          for k in (card['raw_materials'].value or []))
-                if card['raw_materials'].known else 'raw material unknown')
-        lines.append(f'{position:>3}. {card[axis].value:>7g} {card[axis].unit:<8} '
-                     f'{(card["brand"] or "?")[:22]:<24}{mats[:26]:<28}{card["asin"]}')
+             f'{len(ranked)} offers with a trusted {axis}'
+             + (f' · {collapsed} pack-size variants folded in'
+                if collapsed else ''), '']
+
+    for position, members in enumerate(ranked[:limit], start=1):
+        best = members[0]
+        mats = (', '.join(MATERIAL_LABELS.get(key, key)
+                          for key in (best['raw_materials'].value or []))
+                if best['raw_materials'].known else 'raw material unknown')
+        lines.append(f'{position:>3}. {best[axis].value:>7g} {best[axis].unit:<8} '
+                     f'{(best["brand"] or "?")[:22]:<24}{mats[:26]:<28}'
+                     f'{best["asin"]}  {pack_size(best)}')
+        for other in members[1:]:
+            lines.append(f'     {other[axis].value:>7g} {other[axis].unit:<8} '
+                         f'{"same product, other pack":<52}'
+                         f'{other["asin"]}  {pack_size(other)}')
 
     if dropped:
         lines += ['', f'  Excluded from the ranking ({len(dropped)}), '
@@ -309,6 +382,13 @@ def summary_text(cards):
     for key, label, _ in CLAIMS:
         made = sum(1 for card in pasta if card['claims'][key].status == TRUSTED)
         lines.append(f'  {label:<26} claimed by {made:>3} of {len(pasta)}')
+
+    offers = variation.group_offers(pasta)
+    folded = sum(len(members) - 1 for _, members in offers)
+    with_family = sum(1 for card in pasta if card.get('offer'))
+    lines += ['', f'  {len(pasta)} dry pastas are {len(offers)} offers '
+                  f'({folded} pack-size variants of a product already listed). '
+                  f'{with_family} carry a variation matrix.']
 
     comparable = sum(1 for card in pasta
                      if card['price_per_kg'].usable or card['raw_materials'].usable)

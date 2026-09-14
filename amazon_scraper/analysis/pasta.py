@@ -24,6 +24,7 @@ may use a bronze die and never write it down.
 
 import re
 
+from . import variation
 from .checks import (price_per_kg, promote, reconcile_quantity,
                      resolve_contradictions, validate_nutrition)
 from .evidence import (DISPUTED, NOT_CLAIMED, TRUSTED, UNKNOWN, UNVERIFIED,
@@ -255,6 +256,14 @@ def evaluate(record):
         'url': record.get('product_url'),
         'query': record.get('search_query'),
         'category': classify(record),
+        # Which product family and pack size Amazon says this is. Present for
+        # every record, pasta or not, because it is not category knowledge.
+        'offer': variation.offer_key(record),
+        'size_label': variation.size_label(record),
+        'siblings': variation.siblings(record),
+        # Kept so a set of cards can be re-grouped using every matrix in the
+        # set, not only the ones each card happens to carry.
+        'variation': record.get('variation') or {},
     }
 
     if card['category'].value != 'dry_pasta':

@@ -8,7 +8,9 @@ in a history.
 
 | File | What it is |
 |---|---|
-| `validation-amazon-de-2026-09-14.jsonl.gz` | 195 product records, three queries, Amazon.de, no proxy, no browser. Schema v2 — the set every coverage and data-quality figure in EXTRACTION.md and ROADMAP.md was measured on, and the input the R0 analysis was built against. |
+| `validation-amazon-de-2026-09-14.jsonl.gz` | 195 product records, three queries, Amazon.de, no proxy, no browser. Schema v2 — the set every coverage and data-quality figure in EXTRACTION.md and R0 was measured on. |
+| `validation-amazon-de-2026-09-15-v3.jsonl.gz` | The same three queries re-crawled under schema v3, so the records carry `run_id`, `locale` and the variation matrix. The basis for every R3 figure. |
+| `validation-amazon-de-2026-09-15-v3.manifest.json` | That crawl's manifest. |
 | `discovery-amazon-de-2026-09-14.jsonl.gz` | 213 discovery occurrences from the R1 verification crawl: every sighting, before de-duplication. The evidence for the sponsored share and the repeat-sighting rate. |
 | `discovery-amazon-de-2026-09-14.manifest.json` | That crawl's manifest — arguments, locale, counts, stats, finish reason. |
 
@@ -38,6 +40,17 @@ sightings are repeats**, 12 ASINs turned up under more than one query, and
 
 ## Schema
 
-These records are schema v2; current output is v3, which adds `variation`.
-They are kept as they were crawled. Re-crawling would produce different
-products at different prices and would not reproduce the measurements.
+The 2026-09-14 set is schema v2 and has no `variation` key; the 2026-09-15 set
+is v3. Both are kept as crawled, because re-crawling does not reproduce a
+measurement — the two sets are eighteen hours apart and already disagree in a
+way worth knowing about:
+
+| | v2, 2026-09-14 | v3, 2026-09-15 |
+|---|---:|---:|
+| Records with a price | 195/195 | 141/195 |
+| Records with `availability` | 190/195 | 137/195 |
+
+Not an extraction change — the code produces identical output on the older set
+today. Those 54 products had no purchasable offer at the later crawl time, and
+the discovery log agrees: search did not price them either. Product
+availability moves, and a coverage figure is a measurement of one moment.

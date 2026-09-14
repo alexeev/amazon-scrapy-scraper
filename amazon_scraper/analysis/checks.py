@@ -23,6 +23,7 @@ side needs plausibility bands, which are category knowledge.
 import re
 
 from ..extraction.text import parse_number
+from . import variation
 from .evidence import DISPUTED, TRUSTED, UNKNOWN, UNVERIFIED, Evidence, Value
 
 # Atwater factors. Food energy is not an independent measurement: it is
@@ -243,10 +244,11 @@ _NOT_A_UNIT = r'(?!\s*(?:%s)\b)' % _UNIT_RE
 # "6 x 500 g", "3x500g", "16 x 500 g"
 _N_TIMES_W = re.compile(
     r'%s\s*[x×]\s*(\d[\d.,]*)\s*(%s)\b' % (_WHOLE_COUNT, _UNIT_RE), re.I)
-# "500 g (16er Pack)", "125g (4er Pack)"
+# "500 g (16er Pack)", "125g (4er Pack)", "1000 g (Pack of 1)"
 _W_THEN_PACK = re.compile(
-    r'(\d[\d.,]*)\s*(%s)\b[^()]{0,12}\(\s*%s\s*er[- ]?Pack'
-    % (_UNIT_RE, _WHOLE_COUNT), re.I)
+    r'(\d[\d.,]*)\s*(%s)\b[^()]{0,12}\(\s*(?:%s\s*er[- ]?Pack|Pack\s+of\s+%s)'
+    r'\s*\)?'          # quoted back to the user as evidence, so close the paren
+    % (_UNIT_RE, _WHOLE_COUNT, _WHOLE_COUNT), re.I)
 # "16 Packungen mit 500 g", "6 Stück à 250 g"
 _N_PACKS_OF_W = re.compile(
     r'%s\s*(?:packung(?:en)?|packs?|st\u00fcck)\s*(?:mit|\u00e0|a|of|von)?\s*'
@@ -270,11 +272,32 @@ def _grams(amount_text, unit):
     return None if amount is None else amount * _UNIT_GRAMS[unit.lower()]
 
 
+def size_label_quantity(label):
+    """Grams stated by a twister size label, or None.
+
+    The size dimension *is* the pack content, which is what makes a bare
+    weight readable here and not in a title: ``"5 L"`` as a size label means
+    the pack holds five litres, while ``"5 L"`` somewhere in a title could be
+    anything. A label carrying a pack phrase is left to the general parser,
+    which already multiplies it out.
+    """
+    if not label:
+        return None
+    for pattern in (_N_TIMES_W, _W_THEN_PACK, _N_PACKS_OF_W):
+        if pattern.search(label):
+            return None            # a counted phrase: the general rules apply
+    match = _ANY_WEIGHT.search(label)
+    if not match:
+        return None                # "Roségold" is not a quantity
+    return _grams(match.group(1), match.group(2))
+
+
 def pack_hints(record):
     """Independent statements of total pack content, as (grams, Evidence).
 
-    "Independent" means: written in the title or the pack-size name, not read
-    out of the attribute rows the extractor already used. Amazon's quantity
+    Three sources: the variation matrix's size dimension, the title, and the
+    pack-size name. "Independent" means none of them is the attribute row the
+    extractor already used for the total. Amazon's quantity
     attributes are routinely wrong -- a vendor files
     ``Anzahl der Einheiten: 500 gramm`` on a sixteen-pack -- and the extractor
     faithfully reports what it was given. The same vendor also writes a title,
@@ -288,9 +311,22 @@ def pack_hints(record):
     """
     title = record.get('title') or ''
     size_name = (record.get('package') or {}).get('size_name') or ''
+    variation_label = variation.size_label(record)
     hints = []
 
-    for source, text in (('title', title), ('package.size_name', size_name)):
+    # The twister label is the only one of the three that comes from a
+    # different page structure than the attribute rows under dispute, so it is
+    # the strongest of them -- and it is present on pages where the attribute
+    # table states no pack size at all.
+    if variation_label:
+        grams = size_label_quantity(variation_label)
+        if grams:
+            hints.append((grams, Evidence('variation.size_name',
+                                          variation_label)))
+
+    for source, text in (('variation.size_name', variation_label),
+                         ('title', title),
+                         ('package.size_name', size_name)):
         if not text:
             continue
 
@@ -302,8 +338,9 @@ def pack_hints(record):
 
         for match in _W_THEN_PACK.finditer(text):
             grams = _grams(match.group(1), match.group(2))
-            if grams:
-                hints.append((int(match.group(3)) * grams,
+            count = match.group(3) or match.group(4)
+            if grams and count:
+                hints.append((int(count) * grams,
                               Evidence(source, match.group(0))))
 
         for match in _N_PACKS_OF_W.finditer(text):

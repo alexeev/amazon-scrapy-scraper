@@ -53,6 +53,7 @@ amazon-scrapy-scraper/
 │   ├── analysis/                # offline analysis of crawled records
 │   │   ├── evidence.py          # values that carry their own provenance
 │   │   ├── checks.py            # category-neutral validation
+│   │   ├── variation.py         # product families and pack sizes
 │   │   ├── pasta.py             # dry-pasta classification and claims
 │   │   └── report.py            # evidence cards, comparison, ranking
 │   └── settings_baseline.py     # proxy-free local profile
@@ -246,7 +247,52 @@ uv run python -m amazon_scraper.analysis compare data/products.jsonl \
 Ranking is offered on **one axis at a time**, never as a composite score: a
 score would have to weigh a trusted price against an unverified protein figure
 and a claim nobody checked, and it could not answer "why is A better than B",
-which is the whole point. Over the 195-record Amazon.de validation set, 143 of
+which is the whole point.
+
+### Offers, not listings
+
+When search returns two listings of one product in different boxes, ranking
+them as rivals is wrong twice: it doubles a producer's apparent presence and
+implies a quality difference where only the pack differs. So rows are
+**offers** — the cheapest pack wins the row and the other sizes are named
+under it.
+
+This is uncommon: on a three-query Amazon.de crawl, 165 listings were 159
+offers. It is worth handling because the folded rows are interesting ones —
+an Alnatura five-pack costs *more* per kilo than the single box beside it.
+
+Grouping uses Amazon's own variation matrix, which names its own dimensions —
+so the pack-size dimension is looked up, never inferred, and a product that
+varies only by colour yields no pack size at all. Grouping happens **along the
+size dimension only**. One real corpus family holds spaghetti, penne *and*
+fusilli under a single parent ASIN; collapsing all of it would hide a
+difference a cook cares about while fixing one they do not.
+
+The bigger payoff is quantity. The same matrix is an independent statement of
+what is in the box, from a different page structure than the attribute rows
+that get pack sizes wrong, and on 26 records it is the only pack size the page
+states at all. Used as a third reconciliation source it settled 22 quantities
+and exposed 2 new conflicts — one of them a Barilla listing priced at
+**€38.56/kg** because Amazon's attribute table says 1 kg and its unit price is
+quoted per piece. The matrix says `10kg`; the real price is €3.86/kg.
+
+The matrix is present on about a third of records from a search crawl. (The
+extraction corpus suggests 71%, but those pages were picked for layout
+diversity — a bad basis for a frequency claim.)
+
+Comparing two pack sizes of one product now says so, instead of reporting that
+everything except the price is identical:
+
+```text
+  Amazon lists these as the same product in different pack sizes, not as two
+  products.
+
+    A  500 g (1er Pack)       5 EUR/kg [trusted]
+    B  500 g (5er Pack)       3.6 EUR/kg [trusted]
+
+  Only the pack size differs, so the question is price per kilo, not quality:
+  B is the cheaper pack.
+``` Over the 195-record Amazon.de validation set, 143 of
 161 dry pastas have at least one trusted comparison axis, 12 have a disputed
 price per kg and are shown with the contradiction rather than ranked, and 34
 records are classified out as not dry pasta — among them a toilet brush and a
