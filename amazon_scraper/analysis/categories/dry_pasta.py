@@ -11,7 +11,10 @@ comparing a WC brush to a Gragnano IGP.
 protein and 65-80 g carbohydrate per 100 g. Those bands are what let the
 system name the wrong side of a contradiction the generic layer could only
 detect: on B0C3WCFKHT the vendor's energy column is mistyped and the
-macronutrients are fine, on B086K1MFSL it is the other way round.
+macronutrients are fine, on B086K1MFSL it is the other way round. They are
+handed to the generic layer as data, in a
+:class:`~amazon_scraper.validation.CategoryProfile`, and this module never
+decides a trust status itself.
 
 **Which claims matter.** Bronze-die extrusion, slow and low-temperature
 drying, Italian wheat, Gragnano IGP. These are deliberately *not* in the
@@ -24,19 +27,24 @@ may use a bronze die and never write it down.
 
 import re
 
-from . import variation
-from .checks import (price_per_kg, promote, reconcile_quantity,
-                     resolve_contradictions, validate_nutrition)
-from .evidence import (DISPUTED, NOT_CLAIMED, TRUSTED, UNKNOWN, UNVERIFIED,
-                       Evidence, Value, search)
+from amazon_scraper.validation import (CategoryProfile, DISPUTED, NOT_CLAIMED,
+                                       TRUSTED, UNVERIFIED, Evidence, Value,
+                                       validate)
+
+from .. import category as cat
+
+KEY = 'dry_pasta'
 
 # ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
 
-# Breadcrumbs are the cheapest and most reliable classifier Amazon gives us:
-# on the validation set they separate 163 dry pastas from 32 other things with
-# no text analysis at all. Kept as data so a second locale is a data change.
+# Breadcrumbs are the cheapest and most reliable classifier Amazon gives us
+# *for groceries*: on the validation set they separate 163 dry pastas from 32
+# other things with no text analysis at all. That is a property of the
+# category, not of Amazon -- tyre mounting paste is filed under four unrelated
+# breadcrumb roots and has to be classified from the title instead. Kept as
+# data so a second locale is a data change.
 PASTA_BREADCRUMBS = ('nudeln & pasta', 'pasta & noodles')
 NOT_DRY_BREADCRUMBS = ('gekühlte pasta', 'fertiggerichte', 'nudelgerichte',
                        'konserven', 'pastasaucen', 'kühlprodukte',
@@ -59,26 +67,34 @@ RAW_MATERIALS = (
                           r'\bmais\b|\breis(?:mehl)?\b|corn flour|rice flour'),
 )
 
-# Quality claims. Each is (key, label, pattern, whether the ingredient
-# declaration is a valid source for it).
+MATERIAL_LABELS = {
+    'durum_wheat': 'durum wheat', 'wholegrain': 'wholegrain',
+    'egg': 'egg', 'legume': 'legume flour',
+    'gluten_free_grain': 'maize / rice / buckwheat',
+}
+
 CLAIMS = (
-    ('bronze_die', 'Bronze die',
-     r'bronze|trafilat[ao]\s+al\s+bronzo|bronzo'),
-    ('slow_drying', 'Slow drying',
-     r'langsam\w*\s+(?:ge)?trockn|langzeittrocknung|lenta\s+essicc|'
-     r'slow[- ]dried|slow drying'),
-    ('low_temperature_drying', 'Low-temperature drying',
-     r'niedrig\w*\s*temperatur|niedertemperatur|schonend\w*\s+(?:ge)?trockn|'
-     r'bassa temperatura|low[- ]temperature'),
-    ('gragnano_igp', 'Pasta di Gragnano IGP',
-     r'gragnano[^.]{0,40}\b(?:i\.?g\.?p|g\.?g\.?a)\b|'
-     r'\b(?:i\.?g\.?p|g\.?g\.?a)\b[^.]{0,40}gragnano'),
-    ('italian_wheat', 'Italian wheat',
-     r'italienisch\w*\s+(?:hart)?weizen|weizen aus italien|'
-     r'grano\s+(?:duro\s+)?(?:100%\s*)?italiano|italian durum wheat'),
-    ('made_in_italy', 'Made in Italy',
-     r'made in italy|hergestellt in italien|in italien (?:herge|produzi)|'
-     r'100\s*%\s*italien|prodotto in italia'),
+    cat.Claim('bronze_die', 'Bronze die',
+              r'bronze|trafilat[ao]\s+al\s+bronzo|bronzo',
+              why='a rough surface the sauce holds on to'),
+    cat.Claim('slow_drying', 'Slow drying',
+              r'langsam\w*\s+(?:ge)?trockn|langzeittrocknung|lenta\s+essicc|'
+              r'slow[- ]dried|slow drying',
+              why='less starch damage, firmer bite'),
+    cat.Claim('low_temperature_drying', 'Low-temperature drying',
+              r'niedrig\w*\s*temperatur|niedertemperatur|schonend\w*\s+(?:ge)?trockn|'
+              r'bassa temperatura|low[- ]temperature',
+              why='protein structure survives drying'),
+    cat.Claim('gragnano_igp', 'Pasta di Gragnano IGP',
+              r'gragnano[^.]{0,40}\b(?:i\.?g\.?p|g\.?g\.?a)\b|'
+              r'\b(?:i\.?g\.?p|g\.?g\.?a)\b[^.]{0,40}gragnano',
+              why='a protected designation with an enforced method'),
+    cat.Claim('italian_wheat', 'Italian wheat',
+              r'italienisch\w*\s+(?:hart)?weizen|weizen aus italien|'
+              r'grano\s+(?:duro\s+)?(?:100%\s*)?italiano|italian durum wheat'),
+    cat.Claim('made_in_italy', 'Made in Italy',
+              r'made in italy|hergestellt in italien|in italien (?:herge|produzi)|'
+              r'100\s*%\s*italien|prodotto in italia'),
 )
 
 # Drying detail is measured on 2 (temperature) and 7 (duration) of 165 pasta
@@ -89,9 +105,10 @@ DRYING_DETAIL = (
 )
 
 # ---------------------------------------------------------------------------
-# Category plausibility. Dry pasta is one of the best-characterised foods
-# there is; these bands are wide enough for every real durum, wholegrain,
-# egg and legume pasta and still reject a mistyped column.
+# Category plausibility, handed to the generic layer as data. Dry pasta is one
+# of the best-characterised foods there is; these bands are wide enough for
+# every real durum, wholegrain, egg and legume pasta and still reject a
+# mistyped column.
 # ---------------------------------------------------------------------------
 
 NUTRITION_BANDS = {
@@ -115,6 +132,27 @@ NUTRITION_BANDS = {
 # rather than pasta to cook with.
 PRICE_PER_KG_BAND = (0.80, 40.00)
 
+PROFILE = CategoryProfile(key=KEY, label='dry pasta',
+                          nutrition_bands=NUTRITION_BANDS,
+                          price_band=PRICE_PER_KG_BAND)
+
+def _materials(keys):
+    return ', '.join(MATERIAL_LABELS.get(key, key) for key in keys or ())
+
+
+AXES = (
+    cat.Axis('price_per_base', 'Price per kg', better='lower',
+             comparative='cheaper per kilogram', tolerance=0.01),
+    cat.Axis('quantity', 'Pack size'),
+    cat.Axis('raw_materials', 'Made of', render=_materials,
+             why='different raw materials — these are not the same kind of pasta'),
+    cat.Axis('protein_g', 'Protein', better='higher',
+             comparative='higher in protein', tolerance=1.0,
+             why='which for durum pasta tracks semolina quality'),
+    cat.Axis('energy_kcal', 'Energy'),
+    cat.Axis('fiber_g', 'Fibre'),
+)
+
 INGREDIENT_FIELDS = ('food.ingredients',)
 
 
@@ -135,22 +173,24 @@ def classify(record):
         return Value('other', TRUSTED, evidence=[trail],
                      notes=['not in a pasta category'])
 
+    from amazon_scraper.validation import search
     fresh = search(record, FRESH_RE, limit=1)
     if fresh:
         return Value('other', TRUSTED, evidence=[trail] + fresh,
                      notes=['described as fresh pasta'])
 
-    return Value('dry_pasta', TRUSTED, evidence=[trail])
+    return Value(KEY, TRUSTED, evidence=[trail])
 
 
-def raw_materials(record):
+def raw_materials(validated):
     """What the pasta is made of, from the ingredient declaration if possible."""
+    record = validated.record
     declared = ((record.get('food') or {}).get('ingredients') or {}).get('text')
     found, evidence = [], []
 
     for key, pattern in RAW_MATERIALS:
-        hits = search(record, pattern, limit=1,
-                      fields=INGREDIENT_FIELDS if declared else None)
+        hits = validated.search(pattern, limit=1,
+                                fields=INGREDIENT_FIELDS if declared else None)
         if hits:
             found.append(key)
             evidence.append(hits[0])
@@ -159,63 +199,35 @@ def raw_materials(record):
         return Value.unknown('no ingredient declaration and no usable '
                              'description of the raw material')
     if declared:
-        return Value(found, TRUSTED, evidence=evidence)
-    return Value(found, UNVERIFIED, evidence=evidence,
+        return Value(found, TRUSTED, evidence=evidence, source='structured')
+    return Value(found, UNVERIFIED, evidence=evidence, source='text',
                  notes=['read from marketing text; Amazon publishes no '
                         'ingredient declaration for this product'])
 
 
-def claims(record):
+def claims(validated):
     """Every V1 quality claim, each present with a quote or explicitly not made."""
     result = {}
-    for key, label, pattern in CLAIMS:
-        hits = search(record, pattern, limit=2)
+    for claim in CLAIMS:
+        hits = validated.search(claim.pattern, limit=2, fields=claim.fields)
         if hits:
-            result[key] = Value(True, TRUSTED, evidence=hits)
+            result[claim.key] = Value(True, TRUSTED, evidence=hits, source='text')
         else:
-            result[key] = Value(
+            result[claim.key] = Value(
                 False, NOT_CLAIMED,
-                notes=[f'{label} is not claimed anywhere on the page. That is '
-                       f'not the same as it being untrue.'])
+                notes=[f'{claim.label} is not claimed anywhere on the page. '
+                       f'That is not the same as it being untrue.'])
     return result
 
 
-def drying_detail(record):
+def drying_detail(validated):
     """Drying temperature and duration, when the vendor happens to state them."""
     detail = {}
     for key, pattern in DRYING_DETAIL:
-        hits = search(record, pattern, limit=1)
+        hits = validated.search(pattern, limit=1)
         if hits:
-            detail[key] = Value(True, UNVERIFIED, evidence=hits)
+            detail[key] = Value(True, UNVERIFIED, evidence=hits, source='text')
     return detail
-
-
-def apply_bands(values):
-    """Reject nutrition values that are impossible for dry pasta."""
-    for key, value in values.items():
-        band = NUTRITION_BANDS.get(key)
-        if not band or not value.known:
-            continue
-        low, high = band
-        if not low <= value.value <= high:
-            value.dispute(
-                f'{value.value:g} {value.unit} per 100 g is outside the '
-                f'{low:g}-{high:g} {value.unit} range every real dry pasta '
-                f'falls in')
-    return values
-
-
-def nutrition(record):
-    """Validated per-100 g nutrition: generic checks, then category bands."""
-    values = validate_nutrition(record)
-    if not values:
-        return {}
-    # Order matters. The bands name which side of a contradiction is
-    # impossible, so they must run before the contradiction is resolved, and
-    # nothing may be promoted to trusted until both have had their say.
-    apply_bands(values)
-    resolve_contradictions(values)
-    return promote(values)
 
 
 PURE_DURUM_RE = re.compile(
@@ -223,7 +235,7 @@ PURE_DURUM_RE = re.compile(
     r'100\s*%\s*(?:semola di\s+)?grano duro|100\s*%\s*durum', re.I)
 
 
-def check_claim_consistency(card, record):
+def check_claim_consistency(found, materials, validated):
     """Dispute a "100% durum" claim the ingredient declaration contradicts.
 
     A vendor writing "100% Hartweizen" in the bullets while declaring egg or
@@ -231,70 +243,57 @@ def check_claim_consistency(card, record):
     declaration wins -- it is the legally binding text -- and the marketing
     claim is surfaced as disputed rather than dropped.
     """
-    materials = card['raw_materials']
     if materials.status != TRUSTED or not materials.value:
         return
     conflicting = [key for key in ('egg', 'legume', 'gluten_free_grain')
                    if key in materials.value]
     if not conflicting:
         return
-    hits = search(record, PURE_DURUM_RE, limit=1)
+    hits = validated.search(PURE_DURUM_RE, limit=1)
     if not hits:
         return
-    card['claims']['pure_durum'] = Value(True, DISPUTED, evidence=hits + materials.evidence,
-                                         notes=[
-        'the page claims 100% durum wheat, but the ingredient declaration '
-        'also lists ' + ', '.join(conflicting)])
+    found['pure_durum'] = Value(
+        True, DISPUTED, evidence=hits + materials.evidence, source='text',
+        notes=['the page claims 100% durum wheat, but the ingredient '
+               'declaration also lists ' + ', '.join(conflicting)])
 
 
 def evaluate(record):
     """One dry-pasta evidence card, or a classification-only card."""
-    card = {
-        'asin': record.get('asin'),
-        'title': record.get('title'),
-        'brand': record.get('brand'),
-        'url': record.get('product_url'),
-        'query': record.get('search_query'),
-        'category': classify(record),
-        # Which product family and pack size Amazon says this is. Present for
-        # every record, pasta or not, because it is not category knowledge.
-        'offer': variation.offer_key(record),
-        'size_label': variation.size_label(record),
-        'siblings': variation.siblings(record),
-        # Kept so a set of cards can be re-grouped using every matrix in the
-        # set, not only the ones each card happens to carry.
-        'variation': record.get('variation') or {},
+    classification = classify(record)
+    validated = validate(record, PROFILE)
+
+    if classification.value != KEY:
+        return cat.card(record, validated, CATEGORY, classification,
+                        axes={}, claims={})
+
+    materials = raw_materials(validated)
+    found = claims(validated)
+    check_claim_consistency(found, materials, validated)
+
+    axes = {
+        'price_per_base': validated.price_per_base,
+        'quantity': validated.quantity,
+        'raw_materials': materials,
     }
+    for key in ('protein_g', 'energy_kcal', 'fiber_g'):
+        if key in validated.nutrition:
+            axes[key] = validated.nutrition[key]
 
-    if card['category'].value != 'dry_pasta':
-        card.update({'raw_materials': Value.unknown('not dry pasta'),
-                     'quantity': Value.unknown('not dry pasta'),
-                     'price_per_kg': Value.unknown('not dry pasta'),
-                     'nutrition': {}, 'claims': {}, 'drying': {}})
-        return card
-
-    quantity = reconcile_quantity(record)
-    price = price_per_kg(record, quantity)
-
-    if price.known and price.status != DISPUTED:
-        low, high = PRICE_PER_KG_BAND
-        if not low <= price.value <= high:
-            price.dispute(
-                f'{price.value:g} {price.unit} is outside the {low:g}-{high:g} '
-                f'range real dry pasta sells in, so the pack size behind it is '
-                f'probably wrong')
-
-    card.update({
-        'raw_materials': raw_materials(record),
-        'quantity': quantity,
-        'price_per_kg': price,
-        'nutrition': nutrition(record),
-        'claims': claims(record),
-        'drying': drying_detail(record),
-    })
-    check_claim_consistency(card, record)
+    card = cat.card(record, validated, CATEGORY, classification, axes, found)
+    card['drying'] = drying_detail(validated)
     return card
 
 
-def is_pasta(card):
-    return card['category'].value == 'dry_pasta'
+CATEGORY = cat.register(cat.Category(
+    key=KEY,
+    label='dry pasta',
+    profile=PROFILE,
+    axes=AXES,
+    claims=CLAIMS,
+    evaluate=evaluate,
+    default_axis='price_per_base',
+    blurb='Price per kilogram is the axis this category rests on, so the pack '
+          'size behind it is checked against every other statement of it on '
+          'the page before any ranking happens.',
+))

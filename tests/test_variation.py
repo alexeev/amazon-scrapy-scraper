@@ -15,8 +15,9 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from amazon_scraper.analysis import checks, report, variation  # noqa: E402
-from amazon_scraper.analysis.pasta import evaluate  # noqa: E402
+from amazon_scraper.analysis import report  # noqa: E402
+from amazon_scraper.analysis.categories.dry_pasta import evaluate  # noqa: E402
+from amazon_scraper.validation import quantity as checks, variation  # noqa: E402
 from test_corpus import extract_dir  # noqa: E402
 
 
@@ -89,7 +90,7 @@ class Quantity(unittest.TestCase):
                                'total_quantity_source': 'unit_count'},
                       variation=matrix(['size_name'],
                                        {'B000000000': ['500 g (1er Pack)']}))
-        value = checks.reconcile_quantity(data)
+        value = checks.reconcile(data)
         self.assertEqual(value.status, 'trusted')
         self.assertTrue(any('variation' in e.field for e in value.evidence))
 
@@ -100,7 +101,7 @@ class Quantity(unittest.TestCase):
                                'total_quantity_source': 'unit_count'},
                       variation=matrix(['size_name'],
                                        {'B000000000': ['500 g (16er Pack)']}))
-        self.assertEqual(checks.reconcile_quantity(data).status, 'disputed')
+        self.assertEqual(checks.reconcile(data).status, 'disputed')
 
     def test_records_crawled_before_schema_v3_still_work(self):
         """The committed evidence set has no `variation` key at all."""
@@ -109,7 +110,7 @@ class Quantity(unittest.TestCase):
                                'total_quantity_source': 'unit_count'})
         self.assertIsNone(variation.offer_key(data))
         self.assertEqual(variation.size_label(data), '')
-        self.assertEqual(checks.reconcile_quantity(data).status, 'unverified')
+        self.assertEqual(checks.reconcile(data).status, 'unverified')
 
 
 class Offers(unittest.TestCase):
@@ -178,9 +179,12 @@ class AgainstTheCorpus(unittest.TestCase):
         cls.records = extract_dir('amazon_de')
 
     def test_every_size_label_on_the_corpus_parses(self):
+        # 22 of the 38 amazon.de pages carry a size label: 20 groceries, and
+        # the two non-food pages added in R2, labelled "50 ml" and "100g" --
+        # the first size dimension in the corpus that is a volume.
         labelled = {asin: rec for asin, rec in self.records.items()
                     if variation.size_label(rec)}
-        self.assertEqual(len(labelled), 20)
+        self.assertEqual(len(labelled), 22)
         for asin, rec in labelled.items():
             with self.subTest(asin=asin):
                 hints = checks.pack_hints(rec)
@@ -226,7 +230,7 @@ class Reporting(unittest.TestCase):
         cards = [self.pasta('B_ONE', 2.5, 500.0, family),
                  self.pasta('B_FIVE', 10.0, 2500.0, family)]
         text = report.rank_text(cards)
-        self.assertIn('1 offers with a trusted price_per_kg', text)
+        self.assertIn('1 offers with a trusted price_per_base', text)
         self.assertIn('1 pack-size variants folded in', text)
         self.assertIn('same product, other pack', text)
 
@@ -235,9 +239,10 @@ class Reporting(unittest.TestCase):
             'B_ONE': ['500 g (1er Pack)'], 'B_FIVE': ['500 g (5er Pack)']})
         text = report.compare_text(self.pasta('B_ONE', 2.5, 500.0, family),
                                    self.pasta('B_FIVE', 9.0, 2500.0, family))
-        self.assertIn('same product in different pack sizes', text)
-        self.assertIn('price per kilo, not quality', text)
-        self.assertIn('B is the cheaper pack', text)
+        flat = ' '.join(text.split())
+        self.assertIn('same product in different pack sizes', flat)
+        self.assertIn('not which product is better', flat)
+        self.assertIn('B wins on price per kg', flat)
 
     def test_two_real_products_are_still_compared_normally(self):
         text = report.compare_text(self.pasta('B_A', 2.5, 500.0),

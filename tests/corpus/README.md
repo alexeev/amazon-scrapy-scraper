@@ -1,14 +1,24 @@
 # Extraction corpus
 
-35 real Amazon product detail pages, saved to disk, with a snapshot of the
-record each one is expected to produce. `../test_corpus.py` re-extracts every
-page on each run and fails if any field changes.
+39 real Amazon product detail pages, saved to disk, with two snapshots each:
+the record the page is expected to extract to, and the **validated record**
+that record is expected to produce under the published contract.
+`../test_corpus.py` re-runs both on every test run and fails if any field
+changes.
 
 ```
-amazon_de/    34 pages + expected.jsonl.gz   the validated marketplace
-amazon_com/    1 page  + expected.jsonl.gz   probed only, not supported
+amazon_de/    38 pages + expected.jsonl.gz + validated.jsonl.gz
+amazon_com/    1 page  + expected.jsonl.gz + validated.jsonl.gz
 redact.py                                    run before adding a page
 ```
+
+`expected.jsonl.gz` is what the page says. `validated.jsonl.gz` is how much of
+that holds up — every value with its `source`, its `status` and the evidence
+behind it — produced with **no category profile**, so what is pinned is the
+layer that belongs to nobody. It exists because the contract is something
+downstream code depends on, and a silent change in a status is as breaking as
+a silent change in a value, and much easier to make by accident: the rules
+interact.
 
 ## Why the pages are here
 
@@ -35,6 +45,20 @@ Not for being pasta. They cover pages with and without a buy box, with and
 without A+ content, with the nutrition card in each of its observed shapes,
 with single items and multipacks, and with the attribute data in the overview
 table, the tech-spec tables or the detail bullets.
+
+Four are **not groceries at all** (R2): `B01M25SBQ5` a 5 kg tub of tyre
+mounting paste, `B000RW5FVA` the same product class sold as a 50 ml fluid —
+the first size dimension in the corpus that is a volume — `B071JNV24H` a paste
+with no price and a mineral-oil base declared in its bullets, and `B07J2W1S6Q`
+a tube of bicycle grease whose German label, *Fett*, the food parser reads as
+a nutrition declaration. They were added because a corpus made entirely of one
+category cannot catch a layer that has quietly learned that category.
+
+One caution the repository has already paid for: these pages are picked for
+diversity, which makes them a **bad basis for a frequency claim**. The
+variation matrix is on 26 of 38 here and on about a third of records from an
+ordinary search crawl, and R3 was partly justified on the wrong one of those
+two numbers.
 
 ## Privacy
 

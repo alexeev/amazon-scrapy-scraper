@@ -199,7 +199,9 @@ class PdpComposition(unittest.TestCase):
         record = self.extract('<div id="productTitle">Pasta</div>' + NUTRITION_HTML)
         nutrition = record['food']['nutrition']
         self.assertEqual(nutrition['source'], 'nutrition_card')
-        self.assertEqual(nutrition['confidence'], 'high')
+        self.assertNotIn('confidence', nutrition,
+                         'extraction states where a value came from, never how '
+                         'much to believe it (schema v4)')
         self.assertEqual(nutrition['basis_text'], 'Pro 100g')
         self.assertEqual(nutrition['per_100g']['protein_g'], 12.0)
         self.assertEqual(nutrition['per_100g']['fiber_g'], 3.5)
@@ -263,13 +265,24 @@ class PdpComposition(unittest.TestCase):
         self.assertEqual(record['food']['nutrition'], {})
         self.assertEqual(record['raw_tables'], {})
 
-    def test_nutrition_from_prose_is_marked_lower_confidence(self):
+    def test_nutrition_from_prose_names_the_field_it_came_from(self):
         html = ('<div id="productTitle">Pasta</div><div id="productDescription">'
                 'Pro 100 g: Eiweiß 13,5 g, Ballaststoffe 3,1 g.</div>')
         nutrition = self.extract(html)['food']['nutrition']
         self.assertEqual(nutrition['source'], 'text:description')
-        self.assertEqual(nutrition['confidence'], 'medium')
+        self.assertTrue(all(row['basis_confirmed'] for row in nutrition['rows']))
         self.assertEqual(nutrition['per_100g']['protein_g'], 13.5)
+
+    def test_a_pack_size_in_millilitres_is_not_reported_in_grams(self):
+        """The unit follows the row the total came from, not a volume
+        mentioned elsewhere on the page."""
+        html = ('<div id="productTitle">Montagefluid 50 ml</div>'
+                '<table id="productDetails_techSpec_section_1"><tr>'
+                '<th>Anzahl der Einheiten</th><td>50.0 milliliter</td>'
+                '</tr></table>')
+        package = self.extract(html)['package']
+        self.assertEqual(package['total_quantity_base'], 50.0)
+        self.assertEqual(package['total_quantity_unit'], 'ml')
 
 
 if __name__ == '__main__':

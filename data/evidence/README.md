@@ -13,12 +13,18 @@ in a history.
 | `validation-amazon-de-2026-09-15-v3.manifest.json` | That crawl's manifest. |
 | `discovery-amazon-de-2026-09-14.jsonl.gz` | 213 discovery occurrences from the R1 verification crawl: every sighting, before de-duplication. The evidence for the sponsored share and the repeat-sighting rate. |
 | `discovery-amazon-de-2026-09-14.manifest.json` | That crawl's manifest — arguments, locale, counts, stats, finish reason. |
+| `validation-amazon-de-mounting-paste-2026-09-15-v4.jsonl.gz` | 90 product records, three Amazon.de queries for tyre mounting paste. The second category, and the basis for every R2 figure. |
+| `validation-amazon-de-mounting-paste-2026-09-15-v4.manifest.json` | That crawl's manifest. |
 
 ## Reading them
 
 ```bash
 uv run python -m amazon_scraper.analysis summary \
     data/evidence/validation-amazon-de-2026-09-14.jsonl.gz
+
+uv run python -m amazon_scraper.analysis rank \
+    data/evidence/validation-amazon-de-mounting-paste-2026-09-15-v4.jsonl.gz \
+    --category tyre_mounting_paste
 ```
 
 ```python
@@ -40,10 +46,12 @@ sightings are repeats**, 12 ASINs turned up under more than one query, and
 
 ## Schema
 
-The 2026-09-14 set is schema v2 and has no `variation` key; the 2026-09-15 set
-is v3. Both are kept as crawled, because re-crawling does not reproduce a
-measurement — the two sets are eighteen hours apart and already disagree in a
-way worth knowing about:
+The 2026-09-14 set is schema v2 and has no `variation` key; the 2026-09-15
+pasta set is v3; the mounting-paste set is v4.
+
+The pasta sets are kept **as crawled**, because re-crawling does not reproduce
+a measurement — the two are eighteen hours apart and already disagree in a way
+worth knowing about:
 
 | | v2, 2026-09-14 | v3, 2026-09-15 |
 |---|---:|---:|
@@ -54,3 +62,16 @@ Not an extraction change — the code produces identical output on the older set
 today. Those 54 products had no purchasable offer at the later crawl time, and
 the discovery log agrees: search did not price them either. Product
 availability moves, and a coverage figure is a measurement of one moment.
+
+The mounting-paste set is a different case and worth stating plainly. It was
+crawled under v3 and the schema moved to v4 inside the same milestone, so it
+was **re-extracted offline from that run's retained pages** — the same bytes,
+read by newer code, no second request to Amazon. That is not a re-crawl and it
+does not disturb a measurement; it is the capability R1 was built for, used
+for the first time. Nothing else was touched: the lineage, the crawl time and
+the page store are the originals.
+
+Older records stay readable. The validation layer reads v2 and v3 records
+unchanged; they simply carry fields it ignores, such as the removed
+`nutrition.confidence`. Every R2 figure quoted for dry pasta was measured on
+the v3 set with v4 code.

@@ -7,28 +7,43 @@
 
 ## What It Does
 
-- Crawls **Amazon search result pages** (`/s?k=…&page=…`) for given keywords  
-- Extracts **detailed product information** from individual product pages
-- Extracts comprehensive metadata:
-  - **Title**, **Price**, **Rating**, **Product URL**, **ASIN**, **Review Count**
-  - **Product Details**: Description, Brand, Availability, Seller, Images, Features, Specifications
-- Built-in proxy rotation via ScrapeOps for reliable scraping
-- Structured CSV output with automatic pagination support
+A product-research platform for Amazon, built in three layers that can be
+worked on separately:
+
+- **Acquisition** — crawls search result pages (`/s?k=…&page=…`), then the
+  product pages behind them, recording every sighting and retaining every page
+  so a later question costs no second crawl.
+- **Extraction** — turns one page into a rich record and says where each value
+  came from. Knows nothing about any product category.
+- **Validation** — decides how much of that record holds up, against a
+  published, versioned [contract](CONTRACT.md). Knows nothing about any
+  product category either.
+- **Category analysis** — the only layer that knows what the product *is*:
+  what counts as one, which of the vendor's claims matter, and what "better"
+  means. Two shipped: **dry pasta** and **tyre mounting paste**.
+
+Dry pasta is the first real use case, not the boundary of the design. Adding
+a category is one module; adding a marketplace is a profile entry.
 
 ---
 
 ## Key Features
 
-- **Search Page Scraper**: Extracts data from Amazon search result listings
-- **Product Detail Scraper**: Gets comprehensive product information
-- Full Scrapy project structure with proper organization
-- Structured CSV output with data validation
-- Plug‑and‑play integrations:
-  - ScrapeOps Proxy SDK for IP rotation and geolocation
-  - ScrapeOps Monitoring SDK for real-time tracking
-  - Multiple output formats: JSON, CSV, XML, JSON Lines
-- Robust error handling with CSS selector fallbacks
-- Automatic pagination through search results
+- **Every value carries its evidence** — the verbatim source sentence and the
+  field it came from, so a recommendation can be checked rather than trusted.
+- **Every value carries a status** — `trusted`, `disputed`, `unverified` or
+  `unknown`. A number Amazon contradicts is shown with the contradiction and
+  never ranked.
+- **Reproducible crawls** — run manifest, locale, a discovery log written
+  before de-duplication, and the retained page behind every record.
+- **Offline re-extraction** — a new field costs no new crawl.
+- **Category-general** — the acquisition, extraction and validation layers
+  never learn what good pasta is. Two categories prove it rather than assert
+  it.
+- **Regression-tested against reality** — 39 saved real product pages, pinned
+  field by field for both extraction and validation output.
+- Works on amazon.de without a proxy or a browser; ScrapeOps proxy and
+  monitoring remain available as an optional profile.
 
 ---
 
@@ -50,21 +65,31 @@ amazon-scrapy-scraper/
 │   │   ├── marketplaces.py      # per-locale labels, currency, formats
 │   │   ├── blocks.py            # generic Amazon page structures
 │   │   └── pdp.py               # composes one product record
-│   ├── analysis/                # offline analysis of crawled records
-│   │   ├── evidence.py          # values that carry their own provenance
-│   │   ├── checks.py            # category-neutral validation
+│   ├── validation/              # the generic layer: the published contract
+│   │   ├── evidence.py          # values carrying source, status and quotes
+│   │   ├── quantity.py          # pack size, reconciled against the page
+│   │   ├── pricing.py           # price, and price per kg / per litre
+│   │   ├── nutrition.py         # nutrition checks, where a food block exists
 │   │   ├── variation.py         # product families and pack sizes
-│   │   ├── pasta.py             # dry-pasta classification and claims
+│   │   └── contract.py          # validate() -> Validated; CONTRACT_VERSION
+│   ├── analysis/                # category knowledge, downstream of the above
+│   │   ├── category.py          # what a category declares: axes, claims
+│   │   ├── categories/
+│   │   │   ├── dry_pasta.py     # groceries, cheapest trustworthy kilogram
+│   │   │   └── mounting_paste.py# non-food, smallest pack wins
 │   │   └── report.py            # evidence cards, comparison, ranking
 │   └── settings_baseline.py     # proxy-free local profile
 ├── tests/
 │   ├── test_extraction.py       # unit tests over hand-written fixtures
-│   ├── test_corpus.py           # regression test over saved real pages
-│   ├── test_analysis.py         # validation rules + the records behind them
+│   ├── test_corpus.py           # extraction + validation over saved pages
+│   ├── test_validation.py       # the generic layer and its contract
+│   ├── test_analysis.py         # dry pasta + the records behind its rules
+│   ├── test_mounting_paste.py   # the second category, and contract discipline
 │   ├── test_run.py              # provenance, locale, discovery, page store
-│   ├── corpus/                  # 35 saved PDPs + 1 search page + expected
-│   └── cases/                   # 25 records each validation rule was built on
+│   ├── corpus/                  # 39 saved PDPs + 1 search page + snapshots
+│   └── cases/                   # the records each rule was built on
 ├── data/evidence/               # committed crawl evidence behind the roadmap
+├── CONTRACT.md                  # the published schema + compatibility policy
 ├── ROADMAP.md                   # plan of record, with progress
 ├── scrapy.cfg
 ├── pyproject.toml               # dependencies (single source of truth)
@@ -189,19 +214,21 @@ SCRAPY_PROJECT=baseline scrapy crawl amazon_product \
 | `max_pages` | `2` | search result pages per query |
 | `max_products_per_query` | `0` (no cap) | caps PDP discovery per query |
 
-See **[EXTRACTION.md](EXTRACTION.md)** for the PDP structures investigated,
-the record schema, validation results and known limitations, and
-**[BASELINE.md](BASELINE.md)** for the original proxy-free crawl setup.
+See **[CONTRACT.md](CONTRACT.md)** for the published record schema, the
+validated record built on it and the compatibility policy;
+**[EXTRACTION.md](EXTRACTION.md)** for the PDP structures investigated,
+coverage results and known limitations; and **[BASELINE.md](BASELINE.md)**
+for the original proxy-free crawl setup.
 
-### 3. **Analysis layer** (`amazon_scraper.analysis`)
+### 3. **Validation layer** (`amazon_scraper.validation`)
 
 Runs **offline** over the JSONL a crawl produced. It fetches nothing, and
 answers a different question from the extractor: not "what does the page say"
 but "how much of that should we believe".
 
 ```text
-records → generic checks → category knowledge → evidence cards
-          (checks.py)      (pasta.py)          (report.py)
+extraction → validation → category knowledge → evidence cards
+ schema v4   contract v1   categories/          report.py
 ```
 
 A populated field is not a fact. Amazon's *structured* nutrition card states
@@ -209,10 +236,10 @@ A populated field is not a fact. Amazon's *structured* nutrition card states
 another; a sixteen-pack of Garofalo Gragnano reports €62.56/kg because the
 vendor filed `Anzahl der Einheiten: 500 gramm` on a 16 × 500 g listing, and
 Amazon's own price-per-kilo agrees with it because it is computed from the
-same wrong row. So every value the analysis surfaces carries a status and the
-source text behind it:
+same wrong row. So every value carries two independent things and the source
+text behind them:
 
-| Status | Meaning |
+| `status` — did it survive? | |
 |---|---|
 | `trusted` | survived every check that applies to it |
 | `disputed` | sources on the page contradict each other, or a check failed — shown with the contradiction, never ranked |
@@ -220,12 +247,42 @@ source text behind it:
 | `unknown` | we do not know; distinct from "the page does not say" |
 | `not_claimed` | we searched every text field and the claim is not made — which is not the same as it being untrue |
 
-The split between `checks.py` and `pasta.py` is the point. A generic rule can
-prove that an energy figure and its own macronutrients contradict each other;
-only category knowledge can say which side is wrong. On `B0C3WCFKHT` the
-macronutrients are right and the vendor's kJ column is mistyped; on
-`B086K1MFSL` it is the other way round. Both are resolved correctly, and
-neither rule knows what pasta is.
+| `source` — how was it obtained? | |
+|---|---|
+| `structured` | a structure Amazon renders as data |
+| `attributes` | a vendor-filed key/value row |
+| `text` | prose: title, bullets, description, A+ |
+| `published` | a figure Amazon computed, e.g. its own unit price |
+| `derived` | computed here, from other values on the record |
+
+**A source never implies a status**, and that is a correction rather than a
+nicety. The extractor used to publish a single `confidence` that mixed them,
+ranking the structured card above prose — and measured over 195 records,
+`high`-confidence values failed plausibility *more* often than `medium` ones
+(5/45 against 2/40). Schema v4 removes it.
+
+The full contract — both schemas, both vocabularies, what each rule checks,
+and the compatibility policy — is **[CONTRACT.md](CONTRACT.md)**.
+
+### 4. **Category analysis** (`amazon_scraper.analysis`)
+
+A category is the only place that knows what the product is. It supplies
+plausibility data, the claims worth hunting for, and what "better" means —
+and it inherits trust rather than re-deriving it. Two are shipped:
+
+| | `dry_pasta` | `tyre_mounting_paste` |
+|---|---|---|
+| Classified from | breadcrumbs | the **title** — Amazon files this category under four unrelated departments |
+| Ranked on | price per kilogram, cheapest first | **pack size, smallest first** |
+| Price per kg | the axis the category rests on | shown and explicitly refused as a ranking |
+| Nutrition bands | nine | none — it is not food |
+| Price band | €0.80–40.00/kg | none is defensible |
+
+The second one is not a demo. It is the test R2 was waiting for: a non-food,
+sold in tubs, tubes and aerosols, where a five-kilogram workshop tub is the
+*worst* buy for somebody fitting one scooter tyre. Every trust rule
+transferred unchanged; what it exposed is written up in
+[CONTRACT.md §8](CONTRACT.md).
 
 ```bash
 # how much of a crawl is actually usable, and where it fails
@@ -235,6 +292,10 @@ uv run python -m amazon_scraper.analysis summary data/products.jsonl
 uv run python -m amazon_scraper.analysis rank data/products.jsonl \
     --require bronze_die --limit 15
 
+# a different category over a different crawl
+uv run python -m amazon_scraper.analysis rank data/paste.jsonl \
+    --category tyre_mounting_paste
+
 # one product's evidence card, or the same thing as JSON
 uv run python -m amazon_scraper.analysis card data/products.jsonl B08WJGD5Z5
 uv run python -m amazon_scraper.analysis card data/products.jsonl B08WJGD5Z5 --json
@@ -242,6 +303,9 @@ uv run python -m amazon_scraper.analysis card data/products.jsonl B08WJGD5Z5 --j
 # why one is a better buy than the other — and what cannot be compared
 uv run python -m amazon_scraper.analysis compare data/products.jsonl \
     B08WJGD5Z5 B0DQ2N5HRW
+
+# the contract itself, with no category interpretation on top
+uv run python -m amazon_scraper.analysis validated data/products.jsonl
 ```
 
 Ranking is offered on **one axis at a time**, never as a composite score: a
@@ -249,16 +313,32 @@ score would have to weigh a trusted price against an unverified protein figure
 and a claim nobody checked, and it could not answer "why is A better than B",
 which is the whole point.
 
+### Adding a category
+
+One module under `analysis/categories/`. No change to the crawler, the
+extractor or the validation layer — that claim is asserted mechanically by
+`tests/test_mounting_paste.py`, which parses the category's imports and fails
+if it reaches past the contract into the rules.
+
+```python
+PROFILE = CategoryProfile(key='wall_paint', label='wall paint',
+                          price_band=(4.0, 60.0))     # per litre
+
+def evaluate(record):
+    validated = validate(record, PROFILE)             # trust, already decided
+    ...                                               # classify, hunt claims
+```
+
 ### Offers, not listings
 
 When search returns two listings of one product in different boxes, ranking
 them as rivals is wrong twice: it doubles a producer's apparent presence and
 implies a quality difference where only the pack differs. So rows are
-**offers** — the cheapest pack wins the row and the other sizes are named
-under it.
+**offers** — the best pack wins the row and the other sizes are named under
+it.
 
-This is uncommon: on a three-query Amazon.de crawl, 165 listings were 159
-offers. It is worth handling because the folded rows are interesting ones —
+This is uncommon: on a three-query Amazon.de crawl, 165 pasta listings were
+159 offers. It is worth handling because the folded rows are interesting ones —
 an Alnatura five-pack costs *more* per kilo than the single box beside it.
 
 Grouping uses Amazon's own variation matrix, which names its own dimensions —
@@ -276,10 +356,6 @@ and exposed 2 new conflicts — one of them a Barilla listing priced at
 **€38.56/kg** because Amazon's attribute table says 1 kg and its unit price is
 quoted per piece. The matrix says `10kg`; the real price is €3.86/kg.
 
-The matrix is present on about a third of records from a search crawl. (The
-extraction corpus suggests 71%, but those pages were picked for layout
-diversity — a bad basis for a frequency claim.)
-
 Comparing two pack sizes of one product now says so, instead of reporting that
 everything except the price is identical:
 
@@ -290,13 +366,14 @@ everything except the price is identical:
     A  500 g (1er Pack)       5 EUR/kg [trusted]
     B  500 g (5er Pack)       3.6 EUR/kg [trusted]
 
-  Only the pack size differs, so the question is price per kilo, not quality:
-  B is the cheaper pack.
-``` Over the 195-record Amazon.de validation set, 143 of
-161 dry pastas have at least one trusted comparison axis, 12 have a disputed
-price per kg and are shown with the contradiction rather than ranked, and 34
-records are classified out as not dry pasta — among them a toilet brush and a
-cookbook, both returned by pasta searches.
+  Only the pack size differs, so the question is which pack to buy, not which
+  product is better: B wins on price per kg.
+```
+
+Over the 195-record Amazon.de pasta set, 117 of 165 dry pastas have at least
+one trusted comparison axis, 131 have a pack size confirmed by an independent
+statement on the page, and 30 records are classified out as not dry pasta —
+among them a toilet brush and a cookbook, both returned by pasta searches.
 
 See **[ROADMAP.md](ROADMAP.md)** for what this milestone was, what it
 deliberately left out, and what comes next.
@@ -362,7 +439,7 @@ ipad,B09G9FPHY6,https://www.amazon.com/dp/B09G9FPHY6,False,iPad (10th generation
 ### Product Details (JSONL, abridged)
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "marketplace": "www.amazon.de",
   "asin": "B0CPQ5HGC8",
   "search_query": "penne rigate bio vollkorn",
@@ -379,8 +456,7 @@ ipad,B09G9FPHY6,https://www.amazon.com/dp/B09G9FPHY6,False,iPad (10th generation
   "food": {
     "ingredients": {"text": "DINKEL-VOLLKORNMEHL** (eine WEIZENART) …",
                     "source": "nutrition_card"},
-    "nutrition": {"source": "nutrition_card", "confidence": "high",
-                  "basis_text": "Pro 100g",
+    "nutrition": {"source": "nutrition_card", "basis_text": "Pro 100g",
                   "per_100g": {"energy_kcal": 345.0, "protein_g": 12.9,
                                "carbohydrates_g": 63.5, "fat_g": 2.5}}
   },

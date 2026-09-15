@@ -1,18 +1,29 @@
-"""Extraction regression test over saved real Amazon pages.
+"""Regression test over saved real Amazon pages: extraction, then validation.
 
 `tests/corpus/` holds the pages the extraction layer was built against, one
-gzipped HTML file per ASIN, grouped by marketplace, next to a snapshot of the
-record each one is expected to produce. The test re-extracts every page and
-compares it to the snapshot field by field.
+gzipped HTML file per ASIN, grouped by marketplace, next to two snapshots:
 
-This is the test that the unit tests cannot be: the fixtures in
+`expected.jsonl.gz`
+    the record each page should extract to -- what the page says.
+`validated.jsonl.gz`
+    the contract record each of those should validate to, with **no category
+    profile** -- how much of what the page says holds up on its own.
+
+Both are compared field by field. The second exists because the published
+contract is now something downstream code depends on, and a change in a
+status, a source or a note is exactly as much of a breaking change as a
+change in an extracted value -- and far easier to make by accident, because
+the validation rules interact. It is deliberately run without a category:
+what is pinned is the layer that belongs to nobody.
+
+This is the test the unit tests cannot be: the fixtures in
 `test_extraction.py` are hand-written and pin down structures we already
 understand, while these are 2 MB pages full of structures nobody enumerated.
 A runtime upgrade once silently dropped an attribute table from two of them
 and no unit test noticed.
 
-When a change is *meant* to alter extraction output, regenerate the snapshot
-and review the diff as part of the change:
+When a change is *meant* to alter either output, regenerate the snapshots and
+review the diff as part of the change:
 
     uv run python tests/test_corpus.py --update
 """
@@ -30,6 +41,7 @@ from parsel import Selector
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from amazon_scraper.extraction import PdpExtractor, for_domain  # noqa: E402
+from amazon_scraper.validation import validate  # noqa: E402
 
 CORPUS = pathlib.Path(__file__).resolve().parent / 'corpus'
 
@@ -41,6 +53,7 @@ MARKETPLACES = {
 }
 
 SNAPSHOT = 'expected.jsonl.gz'
+VALIDATED = 'validated.jsonl.gz'
 
 # Set by the crawl, not by the page: it would differ on every run.
 VOLATILE = 'fetched_at'
@@ -61,13 +74,19 @@ def extract_dir(name):
     return records
 
 
-def load_snapshot(name):
-    with gzip.open(CORPUS / name / SNAPSHOT, 'rt', encoding='utf-8') as fh:
+def validate_all(records):
+    """Every extracted record put through the contract, category-free."""
+    return {asin: validate(record).as_dict()
+            for asin, record in records.items()}
+
+
+def load_snapshot(name, filename=SNAPSHOT):
+    with gzip.open(CORPUS / name / filename, 'rt', encoding='utf-8') as fh:
         return {r['asin']: r for r in map(json.loads, fh)}
 
 
-def write_snapshot(name, records):
-    with gzip.open(CORPUS / name / SNAPSHOT, 'wt', encoding='utf-8',
+def write_snapshot(name, records, filename=SNAPSHOT):
+    with gzip.open(CORPUS / name / filename, 'wt', encoding='utf-8',
                    compresslevel=9) as fh:
         for asin in sorted(records):
             fh.write(json.dumps(records[asin], ensure_ascii=False,
@@ -104,10 +123,7 @@ def differences(expected, actual):
 
 class Corpus(unittest.TestCase):
 
-    def check(self, name):
-        expected = load_snapshot(name)
-        actual = extract_dir(name)
-
+    def check(self, name, what, expected, actual):
         self.assertEqual(sorted(expected), sorted(actual),
                          f'{name}: corpus and snapshot cover different ASINs; '
                          f'run `python tests/test_corpus.py --update`')
@@ -119,19 +135,33 @@ class Corpus(unittest.TestCase):
                 report.append(f'  {asin}:\n' + '\n'.join(diff))
         if report:
             self.fail(
-                f'{name}: extraction changed for {len(report)} of '
+                f'{name}: {what} changed for {len(report)} of '
                 f'{len(expected)} saved pages.\n' + '\n'.join(report[:5]) +
                 ('\n  ...' if len(report) > 5 else '') +
                 '\nIf this is intended, regenerate with '
                 '`python tests/test_corpus.py --update` and review the diff.')
 
+    def check_extraction(self, name):
+        self.check(name, 'extraction', load_snapshot(name), extract_dir(name))
+
+    def check_validation(self, name):
+        self.check(name, 'validation output',
+                   load_snapshot(name, VALIDATED),
+                   validate_all(extract_dir(name)))
+
     def test_amazon_de(self):
-        self.check('amazon_de')
+        self.check_extraction('amazon_de')
 
     def test_amazon_com(self):
         # One page only. amazon.com is probed, not supported: it is here to
         # keep the marketplace-generic paths honest, not to claim coverage.
-        self.check('amazon_com')
+        self.check_extraction('amazon_com')
+
+    def test_amazon_de_validation(self):
+        self.check_validation('amazon_de')
+
+    def test_amazon_com_validation(self):
+        self.check_validation('amazon_com')
 
 
 if __name__ == '__main__':
@@ -139,7 +169,9 @@ if __name__ == '__main__':
         for marketplace in MARKETPLACES:
             records = extract_dir(marketplace)
             write_snapshot(marketplace, records)
+            write_snapshot(marketplace, validate_all(records), VALIDATED)
             print(f'{marketplace}: wrote {len(records)} records to '
-                  f'{CORPUS / marketplace / SNAPSHOT}')
+                  f'{CORPUS / marketplace / SNAPSHOT} and '
+                  f'{CORPUS / marketplace / VALIDATED}')
     else:
         unittest.main()

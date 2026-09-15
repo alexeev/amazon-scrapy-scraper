@@ -1,13 +1,13 @@
-"""Tests for the pasta analysis layer.
+"""Tests for the dry-pasta category analyzer.
 
-Two kinds, for two kinds of bug.
+The generic rules it rests on are tested in ``test_validation.py``; what is
+here is what only a pasta layer can be wrong about -- classification, raw
+material, the quality claims, and the plausibility bands it hands to the
+generic layer.
 
-The unit tests build the smallest record that exercises one rule. They pin
-down behaviour we designed on purpose.
-
-The case tests run every rule over real records from the validation crawl,
-kept in ``cases/pasta_v1.jsonl.gz``. They exist because the rules were not
-designed in the abstract: each one was written after a real Amazon page
+The case tests run the whole thing over real records from the validation
+crawl, kept in ``cases/pasta_v1.jsonl.gz``. They exist because the rules were
+not designed in the abstract: each one was written after a real Amazon page
 produced a confidently wrong number, and an earlier version of the reconciler
 disputed five correct records before the evidence rules were narrowed. Both
 directions need guarding, so the cases assert the false-positive guards as
@@ -22,10 +22,12 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from amazon_scraper.analysis import checks, report  # noqa: E402
-from amazon_scraper.analysis.evidence import (  # noqa: E402
-    DISPUTED, NOT_CLAIMED, TRUSTED, UNKNOWN, UNVERIFIED, search)
-from amazon_scraper.analysis.pasta import evaluate, nutrition  # noqa: E402
+from amazon_scraper.analysis import report  # noqa: E402
+from amazon_scraper.analysis.categories.dry_pasta import (  # noqa: E402
+    CATEGORY, evaluate)
+from amazon_scraper.validation import (  # noqa: E402
+    DISPUTED, NOT_CLAIMED, TRUSTED, UNKNOWN, UNVERIFIED, nutrition as
+    generic_nutrition, search, validate)
 
 CASES = pathlib.Path(__file__).resolve().parent / 'cases' / 'pasta_v1.jsonl.gz'
 
@@ -56,191 +58,9 @@ def record(**overrides):
     return base
 
 
-def nutrition_block(per_100g, rows=(), source='nutrition_card', derived=()):
-    return {'source': source, 'per_100g': dict(per_100g),
-            'rows': list(rows), 'derived': list(derived)}
-
-
-class GenericChecks(unittest.TestCase):
-    """Rules that need no idea what the product is."""
-
-    def test_unit_that_cannot_measure_the_field_is_rejected(self):
-        # "Protein Kalorien 534kcal" matched the protein alias and carried a
-        # kcal unit into a field defined in grams.
-        values = checks.validate_nutrition(record(food={
-            'ingredients': {}, 'allergens': [],
-            'nutrition': nutrition_block(
-                {'protein_g': 534.0},
-                [{'key': 'protein_g', 'label': 'protein', 'amount': 534.0,
-                  'unit': 'kcal', 'value_text': 'Protein Kalorien 534kcal'}],
-                source='text:aplus')}))
-        self.assertEqual(values['protein_g'].status, UNKNOWN)
-        self.assertIsNone(values['protein_g'].value)
-        self.assertIn('does not measure', values['protein_g'].notes[0])
-
-    def test_number_lifted_out_of_the_basis_phrase_is_rejected(self):
-        values = checks.validate_nutrition(record(food={
-            'ingredients': {}, 'allergens': [],
-            'nutrition': nutrition_block(
-                {'fiber_g': 100.0},
-                [{'key': 'fiber_g', 'label': 'ballaststoffe', 'amount': 100.0,
-                  'unit': 'g', 'value_text': 'Ballaststoffe pro 100g'}],
-                source='text:description')}))
-        self.assertEqual(values['fiber_g'].status, UNKNOWN)
-        self.assertIn('basis phrase', values['fiber_g'].notes[0])
-
-    def test_a_real_100_g_value_survives(self):
-        # The guard must not reject "Kohlenhydrate: 100 g pro 100 g Nudeln"
-        # style rows purely for containing the number 100 twice.
-        values = checks.validate_nutrition(record(food={
-            'ingredients': {}, 'allergens': [],
-            'nutrition': nutrition_block(
-                {'carbohydrates_g': 70.0},
-                [{'key': 'carbohydrates_g', 'label': 'kohlenhydrate',
-                  'amount': 70.0, 'unit': 'g',
-                  'value_text': '70 g pro 100 g'}])}))
-        self.assertNotEqual(values['carbohydrates_g'].status, UNKNOWN)
-
-    def test_macronutrients_cannot_outweigh_the_food(self):
-        values = checks.validate_nutrition(record(food={
-            'ingredients': {}, 'allergens': [],
-            'nutrition': nutrition_block(
-                {'protein_g': 60.0, 'carbohydrates_g': 60.0, 'fat_g': 10.0})}))
-        self.assertEqual(values['protein_g'].status, DISPUTED)
-        self.assertIn('more than the food itself', values['protein_g'].notes[0])
-
-    def test_energy_and_macronutrients_must_agree(self):
-        values = checks.validate_nutrition(record(food={
-            'ingredients': {}, 'allergens': [],
-            'nutrition': nutrition_block(
-                {'energy_kcal': 84.0, 'protein_g': 15.0,
-                 'carbohydrates_g': 65.0, 'fat_g': 2.0})}))
-        self.assertIn(checks.CONTRADICTION, values['energy_kcal'].flags)
-        self.assertIn(checks.CONTRADICTION, values['protein_g'].flags)
-
-    def test_a_generic_check_cannot_name_the_wrong_side(self):
-        """Without plausibility bands nothing may be promoted to trusted."""
-        values = checks.validate_nutrition(record(food={
-            'ingredients': {}, 'allergens': [],
-            'nutrition': nutrition_block(
-                {'energy_kcal': 84.0, 'protein_g': 15.0,
-                 'carbohydrates_g': 65.0, 'fat_g': 2.0})}))
-        checks.resolve_contradictions(values)
-        checks.promote(values)
-        self.assertNotIn(TRUSTED, {value.status for value in values.values()})
-
-    def test_prose_without_a_stated_basis_is_never_trusted(self):
-        values = checks.validate_nutrition(record(food={
-            'ingredients': {}, 'allergens': [],
-            'nutrition': nutrition_block(
-                {'protein_g': 13.0},
-                [{'key': 'protein_g', 'label': 'protein', 'amount': 13.0,
-                  'unit': 'g', 'value_text': 'Protein 13 g',
-                  'basis_confirmed': False}],
-                source='text:description')}))
-        checks.promote(values)
-        self.assertEqual(values['protein_g'].status, UNVERIFIED)
-        self.assertIn('per serving', values['protein_g'].notes[0])
-
-
-class PackQuantity(unittest.TestCase):
-
-    def test_title_multipack_contradicting_the_attribute_table(self):
-        value = checks.reconcile_quantity(record(
-            title='16x Garofalo Fusilli Packung mit 500g',
-            package={'total_quantity_base': 500.0, 'total_quantity_unit': 'g',
-                     'total_quantity_source': 'unit_count'}))
-        self.assertEqual(value.status, DISPUTED)
-        self.assertTrue(any('8000' in e.quote for e in value.evidence))
-
-    def test_pack_size_name_confirming_the_attribute_table(self):
-        value = checks.reconcile_quantity(record(
-            title='Barilla Penne',
-            package={'size_name': '500 g (5er Pack)',
-                     'total_quantity_base': 2500.0, 'total_quantity_unit': 'g',
-                     'total_quantity_source': 'unit_count'}))
-        self.assertEqual(value.status, TRUSTED)
-
-    def test_one_agreeing_hint_outweighs_a_disagreeing_one(self):
-        # "(1 x 500 g) (Packung mit 5)": the first phrase describes a unit,
-        # the second the pack. Both are hints; only one is about the total.
-        value = checks.reconcile_quantity(record(
-            title='Barilla Penne Rigate (1 x 500 g) (Packung mit 5)',
-            package={'total_quantity_base': 2500.0, 'total_quantity_unit': 'g',
-                     'total_quantity_source': 'unit_count'}))
-        self.assertEqual(value.status, TRUSTED)
-
-    def test_a_weight_is_not_a_pack_count(self):
-        """"Packung mit 500g" states a weight; reading 500 as a count made a
-        16-pack into 250 kg of pasta."""
-        hints = checks.pack_hints(record(
-            title='Garofalo Ditali Packung mit 500g', package={}))
-        self.assertEqual(hints, [])
-
-    def test_a_single_unit_pack_says_nothing_about_the_total(self):
-        hints = checks.pack_hints(record(
-            title='Pasta Mix 250 g', package={'size_name': '1er Pack'}))
-        self.assertEqual(hints, [])
-
-    def test_a_count_is_not_multiplied_by_the_attribute_item_weight(self):
-        """Whether the attribute weight is per item or per pack is the very
-        question under dispute, so it cannot be used to settle it."""
-        hints = checks.pack_hints(record(
-            title='Afeltra Linguine',
-            package={'size_name': '12er Pack', 'item_weight_base': 6000.0}))
-        self.assertEqual(hints, [])
-
-    def test_an_item_heavier_than_its_own_package(self):
-        value = checks.reconcile_quantity(record(
-            title='Paccheri Box 12 Stück',
-            package={'item_weight_base': 10000.0, 'package_weight_base': 500.0,
-                     'total_quantity_base': 120000.0, 'total_quantity_unit': 'g',
-                     'total_quantity_source': 'item_weight_x_count'}))
-        self.assertEqual(value.status, DISPUTED)
-
-    def test_no_independent_statement_leaves_it_unverified(self):
-        value = checks.reconcile_quantity(record(
-            title='Spaghetti', package={'total_quantity_base': 500.0,
-                                        'total_quantity_unit': 'g',
-                                        'total_quantity_source': 'unit_count'}))
-        self.assertEqual(value.status, UNVERIFIED)
-
-
-class PricePerKg(unittest.TestCase):
-
-    def test_disputed_quantity_disputes_the_price(self):
-        data = record(title='16x Garofalo Fusilli Packung mit 500g',
-                      price={'amount': 31.28, 'currency': 'EUR'},
-                      unit_price={'amount': 62.56, 'unit': 'kg',
-                                  'text': '62,56 € pro kg'},
-                      package={'total_quantity_base': 500.0,
-                               'total_quantity_unit': 'g',
-                               'total_quantity_source': 'unit_count'})
-        value = checks.price_per_kg(data, checks.reconcile_quantity(data))
-        self.assertEqual(value.status, DISPUTED)
-        self.assertFalse(value.usable)
-        self.assertTrue(any('3.91' in note for note in value.notes),
-                        'the price implied by the page itself should be offered')
-
-    def test_a_confirmed_pack_size_beats_amazons_own_unit_price(self):
-        data = record(title='Pasta Set 20×500g',
-                      price={'amount': 36.31, 'currency': 'EUR'},
-                      unit_price={'amount': 36.31, 'unit': 'kg'},
-                      package={'total_quantity_base': 10000.0,
-                               'total_quantity_unit': 'g',
-                               'total_quantity_source': 'item_weight_x_count'})
-        value = checks.price_per_kg(data, checks.reconcile_quantity(data))
-        self.assertEqual(value.status, TRUSTED)
-        self.assertAlmostEqual(value.value, 3.63, places=2)
-
-    def test_two_sources_disagreeing_with_nothing_to_break_the_tie(self):
-        data = record(price={'amount': 10.0, 'currency': 'EUR'},
-                      unit_price={'amount': 40.0, 'unit': 'kg'},
-                      package={'total_quantity_base': 1000.0,
-                               'total_quantity_unit': 'g',
-                               'total_quantity_source': 'unit_count'})
-        value = checks.price_per_kg(data, checks.reconcile_quantity(data))
-        self.assertEqual(value.status, DISPUTED)
+def pasta_nutrition(rec):
+    """The nutrition the category sees, i.e. validated against its bands."""
+    return validate(rec, CATEGORY.profile).nutrition
 
 
 class Classification(unittest.TestCase):
@@ -264,12 +84,12 @@ class Classification(unittest.TestCase):
         card = evaluate(record(food={
             'ingredients': {'text': 'HARTWEIZENGRIESS, Wasser'},
             'allergens': [], 'nutrition': {}}))
-        self.assertEqual(card['raw_materials'].status, TRUSTED)
-        self.assertIn('durum_wheat', card['raw_materials'].value)
+        self.assertEqual(card['axes']['raw_materials'].status, TRUSTED)
+        self.assertIn('durum_wheat', card['axes']['raw_materials'].value)
 
     def test_raw_material_from_marketing_text_is_unverified(self):
         card = evaluate(record(title='Spaghetti aus Hartweizengrieß'))
-        self.assertEqual(card['raw_materials'].status, UNVERIFIED)
+        self.assertEqual(card['axes']['raw_materials'].status, UNVERIFIED)
 
 
 class Claims(unittest.TestCase):
@@ -307,6 +127,42 @@ class Claims(unittest.TestCase):
         self.assertLess(len(found[0].quote), 200)
 
 
+class ContractUse(unittest.TestCase):
+    """The category must inherit trust, not re-derive it."""
+
+    def test_the_axes_are_the_validated_values_themselves(self):
+        rec = record(package={'size_name': '500 g (5er Pack)',
+                              'total_quantity_base': 2500.0,
+                              'total_quantity_unit': 'g',
+                              'total_quantity_source': 'unit_count'})
+        card = evaluate(rec)
+        validated = card['validated']
+        self.assertIs(card['axes']['quantity'], validated.quantity)
+        self.assertIs(card['axes']['price_per_base'], validated.price_per_base)
+
+    def test_the_module_never_names_a_status_of_its_own_for_a_number(self):
+        """The category may classify and claim; it may not decide whether a
+        *measured* value survived.
+
+        The plausibility bands are still here -- they are category knowledge --
+        but they are handed over as data on a profile, and the ordering that
+        makes them work lives in the contract. Before R2 these four names were
+        all called from this module, and the ordering comment above them was
+        the only specification a second category would have had.
+        """
+        source = (pathlib.Path(__file__).resolve().parent.parent /
+                  'amazon_scraper' / 'analysis' / 'categories' /
+                  'dry_pasta.py').read_text(encoding='utf-8')
+        # `check_claim_consistency` may dispute a *claim*; nothing may touch
+        # the numeric pipeline.
+        body = source.split('def check_claim_consistency')[0]
+        self.assertNotIn('.dispute(', body)
+        for forbidden in ('promote(', 'resolve_contradictions(',
+                          'apply_bands(', 'reconcile('):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source)
+
+
 class RealCases(unittest.TestCase):
     """Every rule, against the records that made it necessary."""
 
@@ -320,24 +176,26 @@ class RealCases(unittest.TestCase):
     CORROBORATED = ('B0CH3MHVF8', 'B08BNQ2D54', 'B0D4R7K82Q', 'B0C2VN9NCD',
                     'B00XUMS46W', 'B0G6D354JV')
 
+    def price(self, asin):
+        return self.cards[asin]['axes']['price_per_base']
+
     def test_known_bad_pack_quantities_are_never_ranked(self):
         for asin in self.DISPUTED_QUANTITY:
             with self.subTest(asin=asin):
-                card = self.cards[asin]
-                self.assertEqual(card['price_per_kg'].status, DISPUTED)
-                self.assertFalse(card['price_per_kg'].usable)
-                self.assertTrue(card['price_per_kg'].evidence,
+                price = self.price(asin)
+                self.assertEqual(price.status, DISPUTED)
+                self.assertFalse(price.usable)
+                self.assertTrue(price.evidence,
                                 'a disputed value must show what contradicts it')
 
     def test_correct_pack_quantities_are_not_disputed(self):
         for asin in self.CORROBORATED:
             with self.subTest(asin=asin):
-                self.assertNotEqual(self.cards[asin]['price_per_kg'].status,
-                                    DISPUTED)
+                self.assertNotEqual(self.price(asin).status, DISPUTED)
 
     def test_the_garofalo_sixteen_pack_offers_the_right_price(self):
-        card = self.cards['B08JLSVW3J']
-        self.assertTrue(any('3.91' in note for note in card['price_per_kg'].notes))
+        self.assertTrue(any('3.91' in note
+                            for note in self.price('B08JLSVW3J').notes))
 
     def test_implausible_nutrition_is_never_trusted(self):
         expected = {
@@ -351,7 +209,7 @@ class RealCases(unittest.TestCase):
         }
         for asin, wrong in expected.items():
             with self.subTest(asin=asin):
-                values = self.cards[asin]['nutrition']
+                values = pasta_nutrition(self.records[asin])
                 for key in wrong:
                     self.assertIn(values[key].status, (DISPUTED, UNVERIFIED),
                                   f'{asin}.{key} must not be presented as fact')
@@ -362,12 +220,12 @@ class RealCases(unittest.TestCase):
                     f'{asin}: disputing one value must not condemn the rest')
 
     def test_a_table_header_parsed_as_a_value_is_dropped(self):
-        values = nutrition(self.records['B0BP2QDLPQ'])
+        values = pasta_nutrition(self.records['B0BP2QDLPQ'])
         for key in ('fiber_g', 'carbohydrates_g', 'protein_g'):
             self.assertEqual(values[key].status, UNKNOWN)
 
     def test_a_kcal_figure_in_a_gram_field_is_dropped(self):
-        values = checks.validate_nutrition(self.records['B089HJPK5T'])
+        values = generic_nutrition.validate(self.records['B089HJPK5T'])
         self.assertEqual(values['protein_g'].status, UNKNOWN)
 
     def test_search_results_that_are_not_pasta_are_excluded(self):
@@ -382,7 +240,7 @@ class RealCases(unittest.TestCase):
 
     def test_clean_records_produce_a_usable_comparison(self):
         left, right = self.cards['B08WJGD5Z5'], self.cards['B0DQ2N5HRW']
-        text = report.compare_text(left, right)
+        text = ' '.join(report.compare_text(left, right).split())
         self.assertIn('Differences', text)
         self.assertIn('cheaper per kilogram', text)
 

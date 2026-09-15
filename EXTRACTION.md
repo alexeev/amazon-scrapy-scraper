@@ -102,7 +102,8 @@ minority map to canonical fields — the rest are preserved verbatim.
 This is the single most important finding for the downstream analysis: a
 parser that only reads the structured nutrition card would find protein on
 ~12% of pasta PDPs. The extractor therefore tries all four in that order and
-tags the result with `source` and `confidence`.
+tags the result with `source`. (It used to tag a `confidence` as well; §2.5
+records why that was removed.)
 
 The structured card's markup is also **malformed** — `<tr>` elements are
 nested inside other `<tr>` elements — but lxml's recovery yields clean
@@ -198,8 +199,8 @@ carries its own audit trail:
 ```
 
 Provenance is also attached per data category: `attribute_sources` maps each
-raw label to the container it came from, `food.nutrition.source` and
-`.confidence` say whether numbers came from the structured card or from prose,
+raw label to the container it came from, `food.nutrition.source` says whether
+numbers came from the structured card, the attribute rows or prose,
 `food.ingredients.source` does the same, `media.image_source` distinguishes the
 gallery blob from the fallback, and `package.total_quantity_source` names the
 rule that produced the pack size. `nutrition.derived` lists values the
@@ -253,6 +254,11 @@ pagination and the errback are unchanged.
 
 ### 2.5 Record schema
 
+**Schema v4.** The full contract — this table, the validated record built on
+top of it, the status and source vocabularies, and the compatibility policy —
+is published in **[CONTRACT.md](CONTRACT.md)**. What follows is the extraction
+half of it.
+
 One JSON object per line. Every group degrades to `{}` / `[]` rather than
 disappearing, so downstream consumers can index without guards.
 
@@ -263,7 +269,7 @@ disappearing, so downstream consumers can index without guards.
 | core | `title`, `brand`, `byline_text`, `brand_url`, `price{amount,currency,text}`, `unit_price{amount,unit,text}`, `rating{value,count,text,count_text}`, `availability`, `seller`, `breadcrumbs[]` |
 | package | `item_weight_*`, `package_weight_*`, `unit_count_*`, `volume_*`, `item_count`, `size_name`, `dimensions`, `total_quantity_base`, `total_quantity_unit`, `total_quantity_source` |
 | content | `feature_bullets[]`, `description`, `important_information[{heading,text}]`, `aplus{module_types,headings,text,text_length,images,tables}` |
-| food | `ingredients{text,source}`, `allergens[]`, `nutrition{source,confidence,basis_text,per_100g,rows,derived}` |
+| food | `ingredients{text,source}`, `allergens[]`, `nutrition{source,basis_text,per_100g,rows,derived}` |
 | attributes | `attributes{}` (canonical), `raw_tables{}` (verbatim), `attribute_sources{}` |
 | media | `images[{url,variant,alt,thumb}]`, `primary_image`, `image_count`, `image_source` |
 | variation | `dimensions[]`, `display_labels{}`, `variation_values{}`, `values_by_asin{asin: [dimension values]}`, `current_asin`, `parent_asin`, `total_variations` — decoded verbatim, never interpreted |
@@ -273,6 +279,21 @@ disappearing, so downstream consumers can index without guards.
 `protein_g`, `fat_g`, `saturated_fat_g`, `carbohydrates_g`, `sugars_g`,
 `fiber_g`, `salt_g`, `sodium_mg`. `*_base` quantities are grams or
 millilitres, so multipacks are directly comparable.
+
+Two fields changed in v4, both because extraction was asserting things it
+could not defend:
+
+- **`nutrition.confidence` is gone.** It graded a value by which structure it
+  came from, and measurement inverted it: on the 195-record validation set,
+  `high` records failed plausibility more often than `medium` ones (5/45
+  against 2/40). `source` stays — it is a fact about the page — and how much
+  to believe a value is now decided per value, downstream, by
+  `amazon_scraper.validation`.
+- **`package.total_quantity_unit` follows the row the total came from**,
+  rather than any volume field present on the page. A 50 ml tin filed as
+  `Anzahl der Einheiten: 50.0 milliliter` used to be reported as 50 g, which
+  then priced it per kilogram and made Amazon's own per-litre figure unusable
+  as a cross-check. 16 of 90 records in the tyre-paste crawl are affected.
 
 ### 2.6 Marketplace portability
 
@@ -336,18 +357,22 @@ serving-size conversion, which is more than a profile entry. It is scoped in
 
 ### 2.7 Tests
 
-`tests/test_extraction.py` — 24 offline unit tests over fixtures modelled on
+`tests/test_extraction.py` — 25 offline unit tests over fixtures modelled on
 the real structures, including the `parseJSON` gallery blob, the malformed
 nutrition table, bidi-marked detail bullets, the mixed number formats, the
 unit-carrying count label, the nested attribute tables that several selectors
 reach at once, and an empty page (which must yield a record, not an
 exception).
 
-`tests/test_corpus.py` — a regression test over `tests/corpus/`, 35 saved
-real PDPs (34 amazon.de, 1 amazon.com) with a committed snapshot of the record
-each one should produce. It compares field by field and names what moved. The
-amazon.de snapshot is byte-identical to the output of the pre-upgrade Python
-3.9.6 / Scrapy 2.13.4 runtime.
+`tests/test_corpus.py` — a regression test over `tests/corpus/`, 39 saved
+real PDPs (38 amazon.de, 1 amazon.com) with two committed snapshots per
+marketplace: the record each page should extract to, and the **validated
+record** each of those should produce under the published contract, with no
+category profile. Both are compared field by field and the failure names what
+moved. Four of the amazon.de pages are non-food — tyre mounting paste, a
+mounting fluid sold in millilitres, and a tube of bicycle grease whose German
+label reads as a nutrition declaration — added in R2 so the corpus stops being
+exclusively groceries.
 
 ```bash
 uv run python -m unittest discover -s tests
@@ -449,13 +474,18 @@ This is the evidence for the multi-source design. Reading only the structured
 nutrition card would have found nutrition on 45 records; trying all four
 sources found it on 85 — **1.9× more**.
 
-| `nutrition.source` | records | confidence |
+| `nutrition.source` | records | graded, at the time, as |
 |---|---:|---|
 | `nutrition_card` | 45 | high |
 | `text:description` | 22 | medium/low |
 | `text:aplus` | 13 | medium/low |
 | `attributes` | 3 | medium |
 | `text:feature_bullets` | 2 | medium/low |
+
+The third column is kept as it was measured, and it is the reason the field no
+longer exists: the `high` rows failed plausibility checks more often than the
+`medium` ones. Schema v4 publishes the source and leaves the grading to
+`amazon_scraper.validation`, per value. See [CONTRACT.md](CONTRACT.md).
 | *(absent)* | 110 | — |
 
 | `total_quantity_source` | records |
@@ -598,7 +628,6 @@ fields, not whether a field is populated.
     ],
     "nutrition": {
       "source": "nutrition_card",
-      "confidence": "high",
       "basis_text": "Pro 100g",
       "per_100g": {
         "energy_kj": 1489.0,
@@ -712,7 +741,7 @@ fields, not whether a field is populated.
 }
 ```
 
-#### B. Nutrition recovered from prose — same schema, lower confidence
+#### B. Nutrition recovered from prose — same schema, weaker evidence
 
 ```json
 {
@@ -720,7 +749,6 @@ fields, not whether a field is populated.
   "title": "Italian Gourmet Pastificio Liguori Mezze Maniche Rigate – Italieni",
   "nutrition": {
     "source": "text:description",
-    "confidence": "medium",
     "basis_text": "100 g",
     "per_100g": {
       "protein_g": 69.0
@@ -810,12 +838,19 @@ is an OCR problem, not a parsing one.
 
 **Free-text nutrition is heuristic.** 37 of 85 nutrition records came from
 prose. The parser anchors on a nutrient label followed by a number and unit,
-and marks `confidence: "medium"` only when a per-100 g basis appears within
-±140 characters; otherwise `"low"`. A vendor writing "Protein 20 g per
-serving" without stating the serving size will produce a plausible but wrong
-per-100 g figure. `source` and `confidence` exist so the downstream layer can
-discount these, and `rows[].value_text` preserves the matched substring for
-audit.
+and sets `rows[].basis_confirmed` only when a per-100 g basis appears within
+±140 characters. A vendor writing "Protein 20 g per serving" without stating
+the serving size will produce a plausible but wrong per-100 g figure.
+`source`, `basis_confirmed` and `rows[].value_text` exist so the validation
+layer can refuse to trust these and quote the matched substring back; a prose
+value with no confirmed basis is never promoted past `unverified`.
+
+The basis test is itself foolable, and the second category found how: German
+*Fett* means grease as well as fat, so `"Fett wird in einer 100 g Tube
+geliefert"` on a tube of bicycle grease yields 100 g of fat per 100 g **with
+the basis apparently confirmed**. That is caught one layer up, by a rule that
+refuses to trust a declaration carrying a single nutrient — see
+[CONTRACT.md §8](CONTRACT.md).
 
 **Vendor data is sometimes simply wrong**, and the extractor faithfully
 reproduces it. One PDP publishes 87.7 kcal/100 g for dry pasta (real value

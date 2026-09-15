@@ -2,20 +2,36 @@
 
 The extraction layer answers "what does the page say". This module is the
 vocabulary for the layer above it, which answers a harder question: "how much
-of that should we believe". Every number and every claim the analysis surfaces
-is a :class:`Value`, which is either trusted, disputed, unverified or unknown,
-and which names the source text it came from.
+of that should we believe". Every number and every claim the platform surfaces
+is a :class:`Value`, which names two independent things:
 
-A populated field is not a fact. The 195-record validation set contains a
-nutrition table Amazon rendered as a structured card -- the highest-confidence
-source there is -- stating 87.7 kcal/100 g for dry pasta, and a prose match
-that turned the phrase "Ballaststoffe pro 100g" into "100 g of fibre". Neither
-is an extraction bug. Both are why status and evidence travel with the value
-rather than being reconstructed later.
+``source``
+    *How the value was obtained* -- a structure Amazon renders as data, a
+    key/value attribute row, prose written by the vendor, a figure Amazon
+    itself computed, or something this layer derived.
+
+``status``
+    *Whether it survived validation* -- trusted, disputed, unverified or
+    unknown.
+
+Keeping them apart is the whole point, and it is a correction rather than a
+refinement. The extractor used to publish a single ``confidence`` that mixed
+them, ranking Amazon's structured nutrition card above prose; measured over
+the 195-record validation set, ``high``-confidence records failed plausibility
+*more* often than ``medium`` ones (5/45 versus 2/40). A well-rendered table is
+evidence about the vendor's care in filling a form, not about the number.
+
+A populated field is not a fact. The same validation set contains a structured
+nutrition card stating 87.7 kcal/100 g for dry pasta, and a prose match that
+turned the phrase "Ballaststoffe pro 100g" into "100 g of fibre". Neither is
+an extraction bug. Both are why status, source and evidence travel with the
+value rather than being reconstructed later.
 """
 
 import re
 from dataclasses import dataclass, field
+
+# -- status: did it survive validation? -------------------------------------
 
 # A value that survived every check that applies to it.
 TRUSTED = 'trusted'
@@ -33,8 +49,40 @@ UNKNOWN = 'unknown'
 # mention it -- and the distinction has to survive into the output.
 NOT_CLAIMED = 'not_claimed'
 
+STATUSES = (TRUSTED, DISPUTED, UNVERIFIED, UNKNOWN, NOT_CLAIMED)
+
 #: Statuses a comparison may act on. Everything else is shown, not used.
 USABLE = (TRUSTED,)
+
+# -- source: how was it obtained? -------------------------------------------
+
+# A structure Amazon renders as data: the nutrition card, the twister matrix.
+STRUCTURED = 'structured'
+# A row of a product-detail key/value table, filed by the vendor.
+ATTRIBUTES = 'attributes'
+# Prose: the title, a feature bullet, the description, A+ copy.
+TEXT = 'text'
+# A figure Amazon computed and published, e.g. its own price per unit.
+PUBLISHED = 'published'
+# Computed here, from other values on the same record.
+DERIVED = 'derived'
+
+SOURCES = (STRUCTURED, ATTRIBUTES, TEXT, PUBLISHED, DERIVED)
+
+# A note on ``derived``, because it is the one source whose bearing on status
+# is not uniform. A derived value is exactly as good as its inputs, so whether
+# it can be trusted depends on whether *they* were validated:
+#
+# * ``price_per_base`` is derived from price and pack size. When the pack size
+#   was confirmed by an independent statement on the page, the quotient is as
+#   solid as its inputs and is trusted.
+# * a derived *nutrient* -- kcal computed from kJ -- is a unit conversion of a
+#   single unchecked number. It adds no evidence about that number, so it can
+#   never be more believable than the row it came from, and the nutrition
+#   rules refuse to promote it.
+#
+# Which is why this is a comment and not a constant: a blanket rule here would
+# be wrong in one of the two directions, and it was, in the first draft.
 
 
 @dataclass(frozen=True)
@@ -50,13 +98,15 @@ class Evidence:
 
 @dataclass
 class Value:
-    """A value, its trust status, why, and what it rests on."""
+    """A value, how it was obtained, whether it survived, and what it rests on."""
 
     value: object = None
     status: str = UNKNOWN
     unit: str = ''
     evidence: list = field(default_factory=list)
     notes: list = field(default_factory=list)
+    #: One of :data:`SOURCES`, or ``''`` when there is no value to source.
+    source: str = ''
     #: Machine-readable markers for rules that run in two passes, e.g. a
     #: contradiction a generic check found but only a category layer can
     #: attribute. Not shown to the user; ``notes`` carries the wording.
@@ -86,6 +136,7 @@ class Value:
         return {
             'value': self.value,
             'status': self.status,
+            'source': self.source,
             'unit': self.unit,
             'notes': list(self.notes),
             'evidence': [{'field': e.field, 'quote': e.quote}
@@ -103,11 +154,12 @@ class Value:
 def text_fields(record):
     """Every free-text field of a record, as ``(field_path, text)`` pairs.
 
-    This is where category signals actually live. Measured over the 195-record
-    validation set: bronze-die claims appear in feature bullets (37), the
-    description (34), the title (19) and attribute rows (11) -- and in A+
-    content on 6 records, none of which are A+-only. Nothing pasta-specific
-    needs to be added to the extractor to find them.
+    This is where category signals actually live, in both categories measured
+    so far. Dry pasta: bronze-die claims appear in feature bullets (37), the
+    description (34), the title (19) and attribute rows (11). Tyre mounting
+    paste: the drying claim that decides the whole category appears in feature
+    bullets and the description, and nowhere structured at all. Nothing
+    category-specific needs to be added to the extractor to find either.
     """
     food = record.get('food') or {}
     content = record.get('content') or {}

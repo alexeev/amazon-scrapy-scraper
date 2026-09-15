@@ -22,7 +22,14 @@ from .text import clean, decode_entities, first_text, node_text, parse_quantity
 # 3 added `variation`: the twister matrix, decoded verbatim. Kept as raw
 # evidence rather than interpreted, so a later layer can decide what a pack
 # size means without another crawl.
-SCHEMA_VERSION = 3
+# 4 removed `food.nutrition.confidence` and fixed `package.total_quantity_unit`.
+# `confidence` mixed how a value was obtained with how much it should be
+# believed, and measurement showed the mixture inverted: on the 195-record
+# validation set, `high` records failed plausibility more often than `medium`
+# ones (5/45 versus 2/40). Extraction now reports only `source` -- which
+# structure the numbers came from -- and trust is decided downstream, per
+# value, by `amazon_scraper.validation`. See CONTRACT.md.
+SCHEMA_VERSION = 4
 
 # Free-text nutrition is only trustworthy when a per-100 basis is stated
 # nearby; otherwise the number may be per serving or per pack.
@@ -314,38 +321,46 @@ class PdpExtractor:
         package['size_name'] = attributes.get('package_size', '')
         package['dimensions'] = attributes.get('dimensions', '')
 
-        total, source = self._total_quantity(package, title)
+        total, source, unit = self._total_quantity(package, title)
         if total is not None:
             package['total_quantity_base'] = round(total, 2)
-            package['total_quantity_unit'] = (
-                'ml' if package.get('item_weight_unit') in VOLUME_UNITS
-                or package.get('volume_unit') in VOLUME_UNITS else 'g')
+            # The unit follows the row the total was read from, not any
+            # volume the page happens to mention elsewhere. A vendor filing
+            # "Anzahl der Einheiten: 50.0 milliliter" was previously reported
+            # as 50 g, which then priced a 50 ml sponge tin per kilogram and
+            # made Amazon's own per-litre figure unusable as a cross-check.
+            package['total_quantity_unit'] = 'ml' if unit in VOLUME_UNITS else 'g'
             package['total_quantity_source'] = source
         return package
 
     def _total_quantity(self, package, title):
-        """Total content of the listing, in grams or millilitres.
+        """Total content of the listing, as ``(base amount, source, unit)``.
 
         Preference order reflects how reliable each source proved to be:
         an explicit unit count, then weight x pack count, then the pack
-        weight, then a "6 x 500 g" style multipack phrase in the title.
+        weight, then a "6 x 500 g" style multipack phrase in the title. The
+        unit travels with the amount so the caller never has to guess which
+        row it came from.
         """
         if package.get('unit_count_base'):
-            return package['unit_count_base'], 'unit_count'
+            return (package['unit_count_base'], 'unit_count',
+                    package.get('unit_count_unit'))
         item, count = package.get('item_weight_base'), package.get('item_count')
         if item and count:
-            return item * count, 'item_weight_x_count'
+            return (item * count, 'item_weight_x_count',
+                    package.get('item_weight_unit'))
         if package.get('package_weight_base'):
-            return package['package_weight_base'], 'package_weight'
+            return (package['package_weight_base'], 'package_weight',
+                    package.get('package_weight_unit'))
         if item:
-            return item, 'item_weight'
+            return item, 'item_weight', package.get('item_weight_unit')
         match = re.search(r'(\d+)\s*[x×]\s*(\d[\d.,]*\s*(?:g|kg|ml|l)\b)', title or '',
                           re.I)
         if match:
             parsed = self._quantity(f'{match.group(1)} x {match.group(2)}')
             if parsed:
-                return parsed[2], 'title_multipack'
-        return None, ''
+                return parsed[2], 'title_multipack', parsed[1]
+        return None, '', ''
 
     # -- food --------------------------------------------------------------
 
@@ -396,10 +411,10 @@ class PdpExtractor:
     def _nutrition(self, sel, description, aplus, important, bullets, raw_tables):
         """Nutrition facts, from the structured card if present, else text.
 
-        The structured EU nutrition card is authoritative but uncommon; most
-        grocery PDPs state the same numbers in prose. Both are returned in the
-        same shape, distinguished by ``source`` and ``confidence`` so the
-        downstream layer can weight them.
+        The structured EU nutrition card is rendered as data and uncommon;
+        most grocery PDPs state the same numbers in prose. Both are returned
+        in the same shape, distinguished by ``source``, which says which
+        structure they came from and nothing about whether to believe them.
         """
         table = self._nutrition_table(sel)
         if table:
@@ -453,7 +468,7 @@ class PdpExtractor:
         basis = clean(first_text(
             sel, '#nic-nutrition-summary-serving',
             '#nic-eu-nutrition-facts-typical-values'))
-        return self._finish_nutrition(rows, per_100, basis, 'nutrition_card', 'high')
+        return self._finish_nutrition(rows, per_100, basis, 'nutrition_card')
 
     _NUTRIENT_VALUE_RE = re.compile(r'\d[\d.,]*\s*(kcal|kj|mg|g|gramm|gram)\b', re.I)
 
@@ -488,7 +503,7 @@ class PdpExtractor:
             if self.mp.attribute_key(label) == 'serving_size':
                 basis = value
                 break
-        return self._finish_nutrition(rows, per_100, basis, 'attributes', 'medium')
+        return self._finish_nutrition(rows, per_100, basis, 'attributes')
 
     def _nutrition_from_text(self, text):
         if not text or len(text) < 10:
@@ -517,9 +532,7 @@ class PdpExtractor:
             return None
         confirmed = any(r.get('basis_confirmed') for r in rows)
         basis = '100 g' if confirmed else ''
-        return self._finish_nutrition(
-            rows, per_100, basis, 'text',
-            'medium' if confirmed else 'low')
+        return self._finish_nutrition(rows, per_100, basis, 'text')
 
     def _store_nutrient(self, per_100, key, amount, unit):
         if key == 'energy_kj':
@@ -528,14 +541,13 @@ class PdpExtractor:
         else:
             per_100.setdefault(key, amount)
 
-    def _finish_nutrition(self, rows, per_100, basis, source, confidence):
+    def _finish_nutrition(self, rows, per_100, basis, source):
         derived = []
         if 'energy_kcal' not in per_100 and 'energy_kj' in per_100:
             per_100['energy_kcal'] = round(per_100['energy_kj'] / _KJ_PER_KCAL, 1)
             derived.append('energy_kcal')
         return {
             'source': source,
-            'confidence': confidence,
             'basis_text': basis,
             'per_100g': per_100,
             'rows': rows,

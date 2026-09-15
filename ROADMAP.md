@@ -11,7 +11,7 @@ item, because the reasoning is what makes the current order defensible.
 |---|---|---|
 | **R0** | Pasta V1 — evidence-backed comparison over existing records | **DONE** |
 | **R1** | Crawl provenance and evidence preservation | **DONE** |
-| **R2** | Generic validation layer + published extraction contract | PLANNED (held: still only one consumer) |
+| **R2** | Generic validation layer + published extraction contract | **DONE** |
 | **R3** | Variation-aware product families | **DONE** (one criterion unmet — see below) |
 | **R4** | Amazon.com as a validated marketplace | DEFERRED |
 | **R5** | Reviews as an evidence source | DEFERRED |
@@ -230,39 +230,139 @@ Three findings worth carrying forward:
 
 ## R2 — Generic validation layer + published extraction contract
 
-**Status: PLANNED — held deliberately, and R3 goes first.**
+**Status: DONE.** The hold is released: the milestone's premise was that a
+rule earns promotion once a *second* consumer has exercised it, and this
+milestone built the second consumer first and promoted afterwards.
 
-The milestone's own premise is that rules get promoted once a *second*
-consumer has exercised them. There is still only one. Promoting now would
-repeat the mistake that put R0 ahead of the original P0: freezing an interface
-around a single caller and calling it general. R3 both adds a second kind of
-consumer for the quantity rules and feeds them a new evidence source, which is
-the exercise R2 is waiting for.
+Shipped as `amazon_scraper/validation/` and `amazon_scraper/analysis/
+categories/`, with **[CONTRACT.md](CONTRACT.md)**, `tests/test_validation.py`,
+`tests/test_mounting_paste.py`, a validation snapshot in the corpus test, and
+the crawl it was measured on in `data/evidence/`.
 
 ### Outcome
 
 Downstream analyzers — the second category, not just pasta — inherit trust
 semantics instead of reinventing them, against a documented, versioned record.
 
+### The second category
+
+Tyre mounting paste for a 10-inch pneumatic scooter tyre with an inner tube,
+on an aluminium rim. Chosen because it shares almost nothing with dry pasta:
+non-food, no nutrition, sold in tubs, tubes, bottles and aerosols, filed by
+Amazon under four unrelated departments, and judged on criteria that are not
+numeric at all — the paste must *dry after mounting and stop lubricating*, be
+safe on rubber, and be free of mineral oil.
+
+Its economics invert too. Pack size is not a discount axis: one scooter tyre
+needs a few grams, the shelf is five-kilogram workshop tubs, and the cheapest
+paste per kilogram is the worst buy. So it ranks on **smallest pack first**
+and refuses price per kilogram as a ranking while still showing it.
+
 ### Scope
 
-- Promote the category-neutral rules proven in R0 (unit/field agreement, mass
-  balance, internal source conflict, quantity-versus-price coherence) into a
-  generic layer between extraction and category analysis.
-- Replace `nutrition.confidence` with value-level semantics: separate *how a
-  value was obtained* (`source`) from *whether it survived validation*
-  (`status`).
+- Promote the category-neutral rules proven in R0 into a generic layer between
+  extraction and category analysis — **done**, as `validation/`, which now
+  also owns the *ordering* (`detect → category bands → resolve → promote`)
+  that was previously a comment inside the pasta module.
+- Replace `nutrition.confidence` with value-level semantics: separate `source`
+  from `status` — **done**, schema v4.
 - Publish the schema with a stated compatibility policy; bump
-  `SCHEMA_VERSION`.
-
-### Explicitly out of scope
-
-Category-specific rules; rewriting the extractor; coverage work.
+  `SCHEMA_VERSION` — **done**, CONTRACT.md, schema v4 / contract v1.
 
 ### Done when
 
-A second category analyzer consumes the contract without re-deriving trust
-rules, and the corpus regression test covers validation output.
+- [x] A second category analyzer consumes the contract without re-deriving
+      trust rules. Asserted mechanically, not by inspection:
+      `tests/test_mounting_paste.py` parses the module's imports and fails if
+      it reaches past the contract into `validation.quantity`,
+      `validation.pricing` or `validation.nutrition`.
+- [x] The corpus regression test covers validation output — a second snapshot,
+      `validated.jsonl.gz`, over all 39 saved pages, produced with **no**
+      category profile so that what is pinned is the layer belonging to nobody.
+
+### Measured on completion
+
+Second-category crawl: 3 queries, 1 search page each, 30 products per query,
+Amazon.de, no proxy. 93 requests, 93 × HTTP 200, 0 retries, 0 challenges,
+`finish_reason: finished`. 90 records.
+
+| | dry pasta (195 records) | tyre mounting paste (90 records) |
+|---|---|---|
+| Classified | 165 · 30 other · **0 unclassified** | 43 · 47 other · **0 unclassified** |
+| Pack quantity | 131 trusted · 13 disputed · 14 unverified · 7 unknown | 25 trusted · 1 disputed · 6 unverified · 11 unknown |
+| Price per base unit | 100 trusted · 9 disputed · 2 unverified · 54 unknown | 13 trusted · 1 disputed · 1 unverified · 28 unknown |
+| **At least one trusted axis** | **117 of 165** | **32 of 43** |
+
+Effect on dry pasta of the two rules the second category forced — same
+records, same code path:
+
+| | before | after |
+|---|---:|---:|
+| Pack quantity trusted | 108 | **131** |
+| Pack quantity unverified | 37 | **14** |
+| Pack quantity disputed / unknown | 13 / 7 | 13 / 7 *(identical)* |
+| Price per base unit trusted | 100 | 100 *(identical)* |
+| Protein trusted | 61 | 60 |
+
+Five findings worth carrying forward.
+
+- **Three of the four things the layer had to learn were bugs, not
+  generalisations.** The plan assumed promotion would be mostly a move. What
+  the second category actually produced was: a price-per-unit path hard-wired
+  to kilograms that silently discarded Amazon's own figure whenever it was
+  quoted per litre; an extraction bug reporting a 50 ml tin as 50 g, because
+  `total_quantity_unit` was inferred from any volume field on the page rather
+  than from the row the total came from; and a missing generic rule that would
+  have let a *trusted* "100 g of fat per 100 g" through. None of these were
+  visible with one consumer, and none of them is category-specific. That is
+  the argument R2 was waiting for, and it came out stronger than expected.
+- **The missing rule is the cleanest measurement in this repository.**
+  German *Fett* means grease as well as fat, so `"Fett wird in einer 100 g
+  Tube geliefert"` on bicycle grease parses as a nutrition declaration — with
+  the per-100 g basis apparently confirmed. Dry pasta was protected only by
+  having a plausibility band. The rule that was missing is category-neutral:
+  a declaration carrying a single nutrient has nothing on the page to confirm
+  it, so it may be shown and never trusted. **Thirteen lone-nutrient blocks
+  exist across the two validation sets and all thirteen are artefacts of
+  matching a word** — nine in dry pasta, six of them reporting 100 g of
+  protein per 100 g and one reporting 534.
+- **R0's refusal to read a bare title weight was right, and too broad.** The
+  reasoning was multipacks: `"Garofalo Fusilli 500g"` on a sixteen-pack states
+  the weight of one box. Take the multipack away and the ambiguity goes with
+  it. Mounting paste does not use multipack phrasing at all — it writes
+  `"Reifenmontagepaste 5 kg"` and means it — and only 2 of 43 pastes had a
+  confirmable pack size. The rule added is narrow and **asymmetric**: when
+  nothing on the page claims more than one unit, a bare weight in the
+  listing's own text may *confirm* the attribute total and may never
+  contradict it. On dry pasta it moves 23 records from unverified to trusted
+  and leaves every disputed and every unknown exactly as it was.
+- **A profile is data, and that had to be enforced rather than intended.**
+  The first draft let a category pass a callable. The version that shipped
+  accepts plausibility bands and a label, and nothing else, because the
+  ordering the bands participate in is the part a second category has no way
+  to know is load-bearing. `price_band=None` is a legitimate answer: mounting
+  paste spans 50 ml tubes and 5 kg tubs two orders of magnitude apart per
+  kilogram, and inventing a band to have one would reject real listings.
+- **The category answer is an evidence-gap report, and honestly so.** The
+  criterion that decides this purchase — does the paste dry out and stop
+  lubricating — is stated on **3 of 43 listings**. "Free of mineral oil" and
+  "solvent-free" are claimed by **none**. Water-solubility, the usable proxy,
+  appears on 6. One listing declares a mineral-oil base, which is the only
+  *disqualifying* evidence on the page and is surfaced as an adverse claim.
+  A ranking that did not say this would be inventing confidence.
+
+### What the second category could not fix
+
+`price_per_base` is `unknown` on 28 of 43 mounting pastes, because 23 have no
+price at all — no purchasable offer at crawl time, the same volatility R3
+measured on the pasta set. Not an extraction gap and not fixable downstream.
+
+### Retired from scope
+
+Nothing. The one thing deliberately not built is a `nutrition: bool` flag on
+the profile: a non-food record has no food block, the nutrition rules cost it
+nothing, and adding a switch would have been a category telling the generic
+layer which rules to run — exactly what the profile is shaped to prevent.
 
 ---
 
@@ -414,8 +514,8 @@ their crawl-graph expansion.
 |---|---|
 | Generic extraction | **Correct as is.** No pasta logic in the parser; all fourteen measured pasta signals are recoverable from `raw_tables`, `content.*` and `food.ingredients`. Do not trade "raw first, normalized second" for coverage. |
 | Food extraction | **Correct placement**, one change: the food layer must stop asserting values it cannot defend. |
-| Validation | **Two layers, never inside extraction.** Extraction stays faithful to the source. *Generic:* unit-versus-field disagreement, basis-phrase-as-value, mass balance, Atwater, quantity-versus-price coherence, on-page source conflict. *Category:* plausibility bands, claim/ingredient contradictions, price floors. |
-| Category analysis | **Downstream of the JSONL.** The acquisition layer never learns what good pasta is. |
+| Validation | **Two layers, never inside extraction** — shipped in R2 as `amazon_scraper/validation/`, published as [CONTRACT.md](CONTRACT.md). Extraction stays faithful to the source. *Generic:* unit-versus-field disagreement, basis-phrase-as-value, mass balance, Atwater, single-nutrient corroboration, quantity-versus-price coherence, on-page source conflict. *Category:* plausibility bands, claim/ingredient contradictions, price floors — supplied to the generic layer as **data**, never as procedure. |
+| Category analysis | **Downstream of the JSONL.** The acquisition layer never learns what good pasta is. Confirmed by a second category in R2: tyre mounting paste needed no change to the crawler, the extractor, or any trust rule — only a profile, a classifier and a list of claims. |
 | Marketplace-specific | `shared structural extraction + marketplace profile + adapters where measured evidence demands`. Correct, but currently over-applied: two profiles exist that nobody validated. |
 | Discovery / Product | **Separate the record now (R1), defer the entity (R3).** The requirement is that a repeat sighting must not cost a repeat fetch and must not be erased. |
 | Locale | **Record it, do not abstract it.** Justification is correctness: the request locale and the label vocabulary are chosen independently today and can disagree with no error at all. German stays the authoritative Amazon.de discovery locale. |
@@ -455,7 +555,13 @@ before R2 — do not model what nothing reads.
 
 ### E3 — Discovery coverage of the category
 
-- **Blocks:** whether query design becomes a roadmap item ahead of R2.
+- **Blocks:** whether query design becomes a roadmap item of its own.
+- **Sharpened by R2.** On the mounting-paste crawl, 47 of 90 results were not
+  the product searched for, and the *criterion that decides the purchase* is
+  stated on 3 of the 43 that were. Whether that is a discovery problem (the
+  right products exist and these queries do not surface them) or a category
+  ceiling (Amazon listings simply do not say) is now the more interesting
+  version of this question, and it is answerable with a hand check.
 - **Experiment:** run the R0 classifier over the 163 records and count
   distinct producers with bronze-die claims against a manual list of ~15 known
   quality Italian producers. Zero crawl cost.
