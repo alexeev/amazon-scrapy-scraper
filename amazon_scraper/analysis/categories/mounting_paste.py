@@ -6,8 +6,12 @@ three properties decide whether a paste is the right one:
 
 1. **It must dry after mounting and stop lubricating.** A paste that stays
    slippery lets the tyre creep on the rim, which shears the valve off the
-   tube. This is the criterion that matters most and, measured below, the one
-   Amazon almost never states.
+   tube. This is the criterion that matters most, and the hardest to read off
+   a product page -- 14 of 43 listings state it, and the first version of this
+   module found only 3, because it looked for the verb ("trocknet ab") and
+   German marketing copy prefers the adjective ("schnelltrocknend"). The
+   correction is in the ``dries_out`` pattern below, and the three records
+   that forced it are in the test corpus.
 2. **It must be safe on rubber**, and free of mineral oil and aggressive
    solvents -- both attack the tube as well as the tyre.
 3. **It should inhibit corrosion**, or at least be declared safe on aluminium
@@ -32,7 +36,7 @@ value to be corroborated by a second one.
 import re
 
 from amazon_scraper.validation import (CategoryProfile, NOT_CLAIMED, TRUSTED,
-                                       Evidence, Value, validate)
+                                       UNVERIFIED, Evidence, Value, validate)
 
 from .. import category as cat
 
@@ -49,7 +53,12 @@ KEY = 'tyre_mounting_paste'
 # mounting paste most needs to be told apart from. So the title is the
 # classifier here, and the generic layer neither knows nor cares.
 PRODUCT_RE = re.compile(
-    r'(?:reifen)?montage[\s-]?(?:paste|wachs|wax|fluid|fl[üu]ssigkeit|spray|mittel)'
+    # `gel` is here because a product called "Montagegel" is the same thing as
+    # one called "Montagefluid" -- REMA TIP TOP sells one product under both
+    # words, "Montage Fluid" in its Amazon title and "Montagegel" in its own
+    # description. Leaving it out cost nothing visible for four crawls and
+    # then cost a whole listing.
+    r'(?:reifen)?montage[\s-]?(?:paste|wachs|wax|fluid|fl[üu]ssigkeit|spray|mittel|gel)'
     r'|(?:reifen)?montier[\s-]?(?:paste|wachs|wax)'
     r'|reifen[\s-]?(?:paste|wachs|wax|gleitmittel|schmiermittel)'
     r'|easy[\s-]?fit'
@@ -79,6 +88,18 @@ ACCESSORY_RE = re.compile(
     r'\b(?:rund)?pinsel\b|\bb[üu]rste\b|\bschaber\b|\bspachtel\b|\bspatel\b',
     re.I)
 
+# Words that say what the paste is *for*, and answer "not tyres". These are
+# checked wherever they appear, unlike WRONG_PRODUCT_RE, because the positional
+# rule below assumes a disqualifying word after the head noun is a bundled
+# extra -- true for "Reifenmontagepaste ... inkl. Ventildreher", false for
+# "Montagepaste Assembly Paste HT/FD Hochtemperatur-Kieselgel-Montagefett 110 g
+# ... Zur Behandlung und Abdichtung aller Arten von Schraubengewinden", which
+# is a thread grease that the positional rule waved through to rank 6 of a
+# shortlist for a scooter tyre.
+PURPOSE_RE = re.compile(
+    r'schraubengewinde|gewindeverbindung|\bgewinde\b'
+    r'|montagefett|kieselgel', re.I)
+
 # "X für Y" makes Y the thing the product is *for*, not the thing it is:
 # "Rundpinsel für Reifenmontagepaste" is a brush, and "Montagepaste für
 # Reifen-Reparaturstopfen" is a plug lubricant, not a mounting paste.
@@ -86,14 +107,35 @@ FOR_RE = re.compile(r'\b(?:f[üu]r|for)\s+[\w-]{0,14}$', re.I)
 
 # ---------------------------------------------------------------------------
 # Claims. Every pattern below was written against the text of a 90-record
-# Amazon.de crawl rather than imagined; the counts in the docstrings are what
-# it actually found among the 43 records classified as mounting paste.
+# Amazon.de crawl rather than imagined; the counts in the comments are what it
+# actually found among the 43 records classified as mounting paste.
+#
+# Written against real text is not the same as complete, and two of these
+# patterns had to be widened after the fact. The lesson both times was the
+# same: a pattern built from the listings that *matched* it cannot show you
+# the listings it missed. What found them was reading the corpus for the
+# subject rather than for the pattern -- every sentence containing "trocken"
+# in any form, rather than every sentence the regex already hit.
 # ---------------------------------------------------------------------------
 
 CLAIMS = (
     cat.Claim(
         'dries_out', 'Dries after mounting',
-        r'trocknet\s+(?:nach|ab|aus|an|ein|danach|schnell)'
+        # Three phrasings the first version of this pattern did not have, each
+        # of which cost a real product its decisive claim. Vendors write the
+        # drying property as a compound adjective far more often than as a
+        # verb ("schnelltrocknend", "schnell trocknend", "lufttrocknet"); they
+        # put an adverb between the verb and its particle ("trocknet
+        # rückstandslos ab"); and they file it as an attribute row rather than
+        # prose ("Aushärtung: 10 Minuten"). Measured on the same 90-record
+        # crawl: 3 listings matched before, 11 match now, and the one that had
+        # been missed with the strongest evidence is the smallest pack on the
+        # shelf.
+        r'\w*trocknet\s+(?:\w+\s+){0,2}(?:nach|ab|aus|an|ein|danach|schnell)'
+        r'|\b\w*[\s-]?trocknend'
+        r'|\b(?:luft|durch|voll)\w*trocknet'
+        r'|verfl[üu]chtigt\s+sich'
+        r'|aush[äa]rtung\s*:\s*\d+\s*(?:minute|min\b|stunde)'
         r'|nach\s+dem\s+(?:an|aus)?trocknen'
         r'|(?:an|ab|aus)getrocknet'
         r'|verliert\s+[^.]{0,30}(?:schmier|gleit)'
@@ -114,9 +156,20 @@ CLAIMS = (
         # Deliberately not `schont ... Reifen`: it matched "Schont Reifen,
         # Nerven & Geldbeutel", which is a slogan, not a compatibility claim.
         r'gummivertr[äa]glich|gummi[\s-]?schonend|gummipflege'
-        r'|greift\s+[^.]{0,30}(?:gummi|reifen|schlauch)\s+nicht\s+an'
+        # "greift Gummi oder Metall nicht an" -- the noun and the negation are
+        # not adjacent, because vendors list the materials. Requiring them to
+        # be adjacent matched nothing at all in 102 records; allowing the list
+        # matches the two listings that make this claim most explicitly.
+        r'|greift\s+[^.]{0,40}(?:gummi|reifen|schlauch)[^.]{0,25}nicht\s+an'
         r'|reifenunsch[äa]dlich|schont\s+[^.]{0,20}(?:gummi|schlauch)'
-        r'|materialschonend|greift\s+weder\s+felgen\s+noch\s+reifen\s+an',
+        r'|materialschonend|greift\s+weder\s+felgen\s+noch\s+reifen\s+an'
+        # An attribute row rather than prose, and weaker than the phrases
+        # above -- it says the vendor filed rubber as the material this is
+        # compatible with, not that it tested a butyl tube. It is kept because
+        # the quote on the card says exactly that much, and a reader can weigh
+        # a filled-in form field for what it is.
+        r'|compatible\s+material\s*:[^.\n]{0,40}gummi'
+        r'|kompatible\w*\s+material\w*\s*:[^.\n]{0,40}gummi',
         why='the inner tube sees the same paste the tyre does'),
     cat.Claim(
         'mineral_oil_free', 'Free of mineral oil',
@@ -137,9 +190,34 @@ CLAIMS = (
         why='paste sits between tyre bead and rim for the life of the tyre'),
     cat.Claim(
         'aluminium_rims', 'Stated for aluminium rims',
+        # `leichtmetall` bare for the same reason `aluminium` already is:
+        # German elides the shared head noun in a list, so "Stahl-,
+        # Leichtmetall und Kunststofffelgen" never contains the string
+        # "Leichtmetallfelge" that the specific alternative looks for.
         r'alu[\s-]?felge|aluminiumfelge|leichtmetallfelge'
-        r'|aluminium(?:felgen)?\b|alufelgen',
+        r'|aluminium(?:felgen)?\b|alufelgen|leichtmetall\b',
         why='the scooter rim is aluminium, not steel'),
+    cat.Claim(
+        'permanent_lubricant', 'Designed to keep lubricating',
+        # The other way a paste fails this use case, and the one nothing in
+        # the first version caught. A general-purpose assembly paste is sold
+        # on properties that only make sense if the lubricant *stays*: wear
+        # protection, a low friction coefficient, emergency running, solid
+        # lubricants. Those are virtues on a bolted joint and disqualifying
+        # between a tyre bead and a rim.
+        #
+        # This does not reclassify anything. The title is still what decides
+        # whether a listing is a tyre paste, because a title is the only field
+        # that reliably says what a product *is*; this claim reports what the
+        # vendor says the product *does*, in the vendor's own words, and lets
+        # the two disagree in the open. Measured on the 90-record crawl: two
+        # listings, both of them "Montagepaste" with no tyre in the name.
+        r'notlaufeigenschaft|festschmierstoff|dauerschmier|langzeitschmier'
+        r'|verschlei[sß]schutz|reibkoeffizient|\bmos\s?2\b|molybd[äa]n'
+        r'|\bnlgi\b|\bep-additiv',
+        adverse=True,
+        why='an assembly paste that keeps lubricating is the failure mode '
+            'this use case exists to avoid, whatever the title calls it'),
     cat.Claim(
         'mineral_oil_base', 'Built on mineral oil',
         r'mineral[öo]lbasis|auf\s+mineral[öo]lbasis'
@@ -188,10 +266,14 @@ def classify(record):
 
     head = PRODUCT_RE.search(title)
     if not head:
+        return _classify_from_body(record, title)
+
+    purpose = PURPOSE_RE.search(title)
+    if purpose:
         return Value('other', TRUSTED,
                      evidence=[Evidence('title', title[:160])],
-                     notes=['the title names no tyre mounting paste, wax or '
-                            'fluid'])
+                     notes=[f'the title says what this paste is for, and it is '
+                            f'not tyres: "{purpose.group(0)}"'])
 
     for pattern, why in ((WRONG_PRODUCT_RE, 'the listing is a different '
                                             'product class'),
@@ -204,6 +286,52 @@ def classify(record):
                                     f'"{match.group(0)}"'])
 
     return Value(KEY, TRUSTED, evidence=[Evidence('title', title[:160])])
+
+
+# Words that put a body-text product claim in this category's world. Required
+# alongside the product word, because "Montagepaste" in a description is not
+# on its own a statement that the thing in the tin goes on a tyre bead.
+TYRE_CONTEXT_RE = re.compile(
+    r'reifen|fahrradmantel|wulst|felge|ty[rp]e|tire|bike|fahrrad', re.I)
+
+# Fields that may speak when the title does not. The title stays the
+# classifier -- see PRODUCT_RE -- and this is the one case it cannot decide.
+BODY_FIELDS = ('content.feature_bullets', 'content.description')
+
+
+def _classify_from_body(record, title):
+    """Classify a listing whose title names no product class at all.
+
+    "Rema Tip Top 501004 - Schwammdose, Transparent, 50 ml" is a real Amazon
+    title for a bicycle tyre mounting gel. It names the container, the colour
+    and the volume, and never says what is in it; its description does
+    ("Montagegel für Fahrradreifen, das die Montage/Demontage von Reifen
+    vereinfacht"). Reading the title as "no" made this listing invisible to a
+    study whose whole subject it is.
+
+    A silent title is not a denial, but it is also not the evidence the
+    ordinary path has, so this route is deliberately weaker in three ways: it
+    is only taken when the title names *nothing* -- neither a product word nor
+    a disqualifier, so it can never overturn the positional rule; it needs a
+    product word **and** a tyre-context word in the body; and what it returns
+    is ``unverified``, which the card prints and no ranking treats as settled.
+    """
+    validated = validate(record, PROFILE)
+    body = validated.search(PRODUCT_RE, limit=1, fields=BODY_FIELDS)
+    context = validated.search(TYRE_CONTEXT_RE, limit=1, fields=BODY_FIELDS)
+    wrong = (validated.search(WRONG_PRODUCT_RE, limit=1, fields=BODY_FIELDS)
+             or validated.search(PURPOSE_RE, limit=1, fields=BODY_FIELDS))
+
+    if body and context and not wrong:
+        return Value(KEY, UNVERIFIED, evidence=list(body),
+                     notes=['the title names no product class at all, so this '
+                            'was decided on the description rather than on '
+                            'the title'])
+
+    return Value('other', TRUSTED,
+                 evidence=[Evidence('title', title[:160])],
+                 notes=['the title names no tyre mounting paste, wax or '
+                        'fluid'])
 
 
 # A listing that bundles tools describes them in the same text the paste is
@@ -220,12 +348,40 @@ def is_bundle(validated):
     return bool(BUNDLE_RE.search(validated.title or ''))
 
 
+# A sentence that says the paste does *not* dry is not evidence that it does.
+# Widening the drying pattern made this necessary rather than merely tidy: one
+# 5 kg tub advertises "TROCKNET NICHT EIN IM EIMER UND AM PINSEL" -- a storage
+# property, and a selling point for a workshop that leaves the lid off -- and
+# the same listing separately states "Abtrocknungsverhalten: schnell
+# trocknend". Both sentences are on the page and both are true of the product;
+# only the second one answers the question this category asks. So negated hits
+# are dropped and the search goes deeper to find the ones behind them, rather
+# than the claim being decided by whichever sentence Amazon happened to print
+# first.
+NEGATED = {
+    'dries_out': re.compile(
+        r'trocknet[^.]{0,20}\b(?:nicht|nie|kaum)\b'
+        r'|\bnicht\s+(?:aus|ein|an|ab)?(?:trocknen|trocknend)'
+        r'|\bohne\s+(?:aus|ein|an|ab)?zutrocknen', re.I),
+}
+
+
+def stated(validated, claim):
+    """The hits that survive this claim's own negations, best source first."""
+    negation = NEGATED.get(claim.key)
+    limit = 2 if negation is None else 6
+    hits = validated.search(claim.pattern, limit=limit, fields=claim.fields)
+    if negation is not None:
+        hits = [hit for hit in hits if not negation.search(hit.quote)]
+    return hits[:2]
+
+
 def claims(validated):
     """Every criterion, each with the vendor's own sentence or an explicit gap."""
     bundle = is_bundle(validated)
     result = {}
     for claim in CLAIMS:
-        hits = validated.search(claim.pattern, limit=2, fields=claim.fields)
+        hits = stated(validated, claim)
         if hits:
             value = Value(True, TRUSTED, evidence=hits, source='text')
             if bundle:
@@ -251,18 +407,28 @@ def check_claim_consistency(found):
     is a claim about something the product is not.
     """
     base = found.get('mineral_oil_base')
-    if not (base and base.status == TRUSTED):
-        return
-    for key, why in (
-            ('mineral_oil_free',
-             'the page claims freedom from mineral oil and also files a '
-             'mineral-oil base'),
-            ('dries_out',
-             'the page claims the paste dries out, but declares a '
-             'mineral-oil base, which does not evaporate')):
-        value = found.get(key)
+    if base and base.status == TRUSTED:
+        for key, why in (
+                ('mineral_oil_free',
+                 'the page claims freedom from mineral oil and also files a '
+                 'mineral-oil base'),
+                ('dries_out',
+                 'the page claims the paste dries out, but declares a '
+                 'mineral-oil base, which does not evaporate')):
+            value = found.get(key)
+            if value is not None and value.status == TRUSTED:
+                value.dispute(why, *base.evidence[:1])
+
+    # And the same argument from the other adverse claim. Wear protection and
+    # a low friction coefficient are properties of a film that is still there;
+    # a page selling both those and "dries out" is describing two products.
+    lubricant = found.get('permanent_lubricant')
+    if lubricant and lubricant.status == TRUSTED:
+        value = found.get('dries_out')
         if value is not None and value.status == TRUSTED:
-            value.dispute(why, *base.evidence[:1])
+            value.dispute('the page claims the paste dries out and also sells '
+                          'it on staying lubricating',
+                          *lubricant.evidence[:1])
 
 
 def suitability(found):

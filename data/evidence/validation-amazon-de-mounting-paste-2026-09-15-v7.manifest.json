@@ -1,0 +1,58 @@
+{
+  "arguments": {
+    "asin": [
+      "B086BX8M3C"
+    ],
+    "domain": "www.amazon.de",
+    "keep_pages": true,
+    "keyword": [],
+    "max_pages": 2,
+    "max_products_per_query": 0
+  },
+  "counts": {
+    "discovery_occurrences": 0,
+    "page_write_errors": 0,
+    "pages_saved": 1
+  },
+  "finish_reason": "finished",
+  "finished_at": "2026-09-15T16:47:24+00:00",
+  "locale": {
+    "accept_language": "de-DE,de;q=0.9,en;q=0.8",
+    "expected_language": "de",
+    "language": "de",
+    "status": "matches"
+  },
+  "marketplace": "www.amazon.de",
+  "pages_retained": true,
+  "run_id": "20260915T164722Z-www.amazon.de-15b4c0a6",
+  "spider": "amazon_product",
+  "started_at": "2026-09-15T16:47:22+00:00",
+  "stats": {
+    "amazon/field/brand": 1,
+    "amazon/field/breadcrumbs": 1,
+    "amazon/field/description": 1,
+    "amazon/field/feature_bullets": 1,
+    "amazon/field/images": 1,
+    "amazon/field/raw_tables": 1,
+    "amazon/field/title": 1,
+    "amazon/field/total_quantity": 1,
+    "amazon/pdp_items": 1,
+    "downloader/request_bytes": 392,
+    "downloader/request_count": 1,
+    "downloader/request_method_count/GET": 1,
+    "downloader/response_bytes": 275095,
+    "downloader/response_count": 1,
+    "downloader/response_status_count/200": 1,
+    "httpcompression/response_bytes": 1108524,
+    "httpcompression/response_count": 1,
+    "item_scraped_count": 1,
+    "log_count/INFO": 3,
+    "memusage/max": 92405760,
+    "memusage/startup": 92405760,
+    "response_received_count": 1,
+    "scheduler/dequeued": 1,
+    "scheduler/dequeued/memory": 1,
+    "scheduler/enqueued": 1,
+    "scheduler/enqueued/memory": 1
+  }
+}

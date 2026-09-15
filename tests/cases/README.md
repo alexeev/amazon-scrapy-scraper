@@ -10,7 +10,7 @@ rule was written against would otherwise live on one machine.
 
 ```
 pasta_v1.jsonl.gz           25 records · dry pasta
-mounting_paste_v1.jsonl.gz  29 records · tyre mounting paste
+mounting_paste_v1.jsonl.gz  34 records · tyre mounting paste
 ```
 
 ## `pasta_v1.jsonl.gz`
@@ -32,12 +32,16 @@ three latent defects in the generic layer visible.
 
 | Group | ASINs | Why |
 |---|---|---|
-| Mounting paste | `B01M25SBQ5` `B000RW5FVA` `B00295ER76` `B0GNMRKPGQ` `B0GNMSWB7D` `B0DHS9JHLJ` `B01LB62GQ2` `B01LB4QIEU` `B071JNV24H` `B001NYY87I` `B0FSRM9TBK` `B0055Y6M7Q` `B076HTCT4J` | Tubs, tubes, a sponge tin, an aerosol and three kits. `B0GNMRKPGQ` is one of only three listings in 43 that state the drying criterion the whole category turns on. |
+| Mounting paste | `B01M25SBQ5` `B000RW5FVA` `B00295ER76` `B0GNMRKPGQ` `B0GNMSWB7D` `B0DHS9JHLJ` `B01LB62GQ2` `B01LB4QIEU` `B071JNV24H` `B001NYY87I` `B0FSRM9TBK` `B0055Y6M7Q` `B076HTCT4J` | Tubs, tubes, a sponge tin, an aerosol and three kits. `B0GNMRKPGQ` states the drying criterion the whole category turns on in the one phrasing the original pattern recognised. |
 | Near-miss product classes | `B097C8JJY4` `B0D1RJ1HLC` `B00CSRY8OC` `B0FJG6YJ2X` `B08VNDJJS6` | All five have "Montagepaste" in the title and none is one. Carbon paste is a *friction* paste — the opposite function; anti-seize and ceramic paste are designed never to dry; the last is a lubricant for repair plugs, caught by the `für` rule. |
 | Accessories | `B01MXXA922` `B01M6WXE0X` | A brush named before the paste it is for. The positional rule that excludes them must not also exclude "5 kg paste **with** a brush". |
 | Other products entirely | `B07V48PZY5` `B0CRTZ5ZJN` `B0C1GHMX8V` | Tubeless sealant, wheel weights, a pressure gauge — all returned by the same searches. |
 | "Fett" is grease *and* fat | `B0068ICY70` `B07J2W1S6Q` `B0DGPV9TWZ` `B0F4PQ7NMM` | The food parser reads a pack size as a nutrition declaration: `"Fett wird in einer 100 g Tube geliefert"` → 100 g of fat per 100 g. Two of the four satisfy the per-100 g basis test, so only the single-nutrient corroboration rule stops them. |
 | Volume pricing | `B0D6N5HYKB` `B007MFMN9W` | Priced per litre by Amazon. The first also states `2 x 75ml` against a 75 ml attribute total, which is a disputed pack quantity. |
+| How vendors actually write "dries" | `B000RW5FVA` `B0GXK9CM2D` `B0H94J1QZW` | Added when the drying pattern was widened. None of the three says "trocknet ab": they say "Schnelltrocknend", "schnell trocknend" and "vollständig lufttrocknet", and the first files it as an attribute row as well. The original pattern matched none of them, which cost the smallest pack on the shelf its decisive claim. |
+| A title that names nothing | `B086BX8M3C` | "Rema Tip Top 501004 - Schwammdose, Transparent, 50 ml" — container, colour, volume, and never the product class. Thirteen queries across five crawls never surfaced it, and the title-based classifier filed it as "other" when it finally arrived. It is a bicycle tyre mounting gel, and its description says so. The only record in the corpus classified on body text rather than on its title. |
+| The pack size a ranking dropped | `B087WQJQDS` | A 5 g tube — the smallest pack in a 127-record corpus, and the only listing that states both "trocknend" and freedom from mineral oil. Its title ends "Schwarz Einheitsgröße" and its size field says "Einheitsgröße", so the 5 g exist only in a feature bullet; until bullets were read for corroboration, the quantity stayed unverified and unverified values are not ranked. The product the ranking exists to surface was the one it hid. |
+| A drying claim and its own negation | `B0BJRG3K8Y` | "TROCKNET NICHT EIN IM EIMER UND AM PINSEL" and "Abtrocknungsverhalten: schnell trocknend", on one page, with the negated bullet printed first. Both are true of the product; only the second answers this category's question. |
 
 ## Privacy
 

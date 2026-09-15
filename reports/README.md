@@ -31,6 +31,36 @@ crawl evidence behind any roadmap decision under `data/evidence/`.
 | Report | Question | Category module |
 |---|---|---|
 | `BASMATI.md` | best dry basmati on Amazon.de for regular home use | `analysis/categories/basmati_rice.py` |
+| `FUSILLI.md` | best fusilli on Amazon.de for regular home use | `analysis/categories/dry_pasta.py` |
+| `MOUNTING-PASTE.md` | tyre mounting paste for a 10-inch tubed scooter tyre on an aluminium rim, which must dry out after mounting | `analysis/categories/mounting_paste.py` |
+
+The mounting-paste study is the one that best shows why the category module is
+the committed artefact and the report is not. Three rounds of defects surfaced
+while answering one question, and each was found the same way — by someone
+reading the output against the world rather than by a test:
+
+1. Four claim patterns were too narrow, because each had been written from the
+   listings it already matched and none could show the listings it missed.
+2. The extractor published the low end of a price range as a price (schema v6).
+3. The pack-size rule would only take corroboration from a title or size
+   field, so the smallest pack on the shelf — the one the ranking existed to
+   surface — was never ranked at all.
+
+All three corrections live in the modules and in `tests/cases/`, where the next
+study inherits them. The prices they were found around were stale within the
+week, which is the whole argument for what gets committed and what does not.
+
+4. Search does not enumerate a shelf. Thirteen queries across five crawls —
+   three naming the brand — never surfaced a 50 ml tin from a major
+   manufacturer, because its title is "Rema Tip Top 501004 - Schwammdose,
+   Transparent, 50 ml" and contains no word anyone would search for. The same
+   silence made the title-based classifier reject it when it finally arrived.
+   The spider now takes `-a asin=` for products someone can name, and the
+   classifier falls back to the description when a title names nothing.
+
+The one that has no fix here is the habit, not the code: this study wrote "no
+listing says this" twice where "no listing I saw says this" was what the
+evidence supported. Both times a manufacturer's own catalogue disproved it.
 
 What that exercise revealed about the platform itself — as opposed to about
 rice — is in [USABILITY.md](../USABILITY.md), which *is* committed, because it

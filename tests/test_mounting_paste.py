@@ -6,7 +6,7 @@ trust rules*, so the tests below assert that as directly as they can: the
 axes on a card are the very objects the validation layer produced, the module
 never names a status for a measured value, and nothing in it imports a rule.
 
-The cases are 29 records taken verbatim from a 90-record Amazon.de crawl for
+The cases are 32 records taken verbatim from a 90-record Amazon.de crawl for
 "reifenmontagepaste", "montagepaste reifen motorrad" and "reifen montagepaste
 fahrrad". The same searches return carbon assembly paste (a *friction* paste),
 anti-seize, bearing grease, tubeless sealant, wheel weights and a tyre-pressure
@@ -86,6 +86,61 @@ class Classification(unittest.TestCase):
             self.name('BGS 8901-1 | Montagepaste für Reifen-Reparaturstopfen'),
             'other')
 
+    def test_a_thread_paste_is_not_a_tyre_paste_wherever_it_says_so(self):
+        """The positional rule reads a later word as a bundled extra.
+
+        That holds for "Reifenmontagepaste ... inkl. Ventildreher" and fails
+        for a thread grease whose disqualifying words are all attributes:
+        this one reached rank 6 of a scooter-tyre shortlist.
+        """
+        self.assertEqual(self.name(
+            'Montagepaste Assembly Paste HT/FD Hochtemperatur-Kieselgel-'
+            'Montagefett 110 g mit SYNGIS-Technologie - Zur Behandlung und '
+            'Abdichtung aller Arten von Schraubengewinden'), 'other')
+
+    def test_the_purpose_rule_does_not_catch_an_ordinary_tyre_paste(self):
+        for title in ('KS Tools Reifenmontagepaste 5 kg, gelb',
+                      'Tip Top REMAXX Bike Montage Fluid Schwarz Einheitsgröße',
+                      'HASKYY Reifenmontagepaste 1kg Weiß Montagepaste'):
+            with self.subTest(title=title):
+                self.assertEqual(self.name(title), KEY)
+
+    def test_a_mounting_gel_is_the_same_product_class(self):
+        """One product, two words: "Montage Fluid" on Amazon, "Montagegel"
+        in the manufacturer's own description of the same article."""
+        self.assertEqual(self.name('REMA TIP TOP Montagegel Fahrradreifen'), KEY)
+
+    def test_a_silent_title_is_decided_on_the_description(self):
+        """"Rema Tip Top 501004 - Schwammdose, Transparent, 50 ml".
+
+        A real title for a bicycle tyre mounting gel: container, colour,
+        volume, and never what is in it. Reading that as "no" hid the listing
+        from a study about exactly this product.
+        """
+        record = {'title': 'Rema Tip Top 501004 - Schwammdose, Transparent, '
+                           '50 ml',
+                  'content': {'description': 'Montagegel für Fahrradreifen, '
+                                             'das die Montage/Demontage von '
+                                             'Reifen vereinfacht.'}}
+        value = classify(record)
+        self.assertEqual(value.value, KEY)
+        self.assertEqual(value.status, UNVERIFIED,
+                         'a body-text decision must not claim a title\'s force')
+        self.assertTrue(value.evidence[0].field.startswith('content.'))
+
+    def test_the_body_route_still_needs_a_tyre_to_be_about(self):
+        record = {'title': 'Acme 12345 - Dose, Transparent, 50 ml',
+                  'content': {'description': 'Montagepaste für Möbelbeschläge '
+                                             'und Scharniere.'}}
+        self.assertEqual(classify(record).value, 'other')
+
+    def test_the_body_route_cannot_overturn_the_positional_rule(self):
+        """A title that names a disqualifier never reaches the body at all."""
+        record = {'title': "Peaty's Max Grip Carbon Montagepaste",
+                  'content': {'description': 'Montagegel für Fahrradreifen '
+                                             'und Reifen aller Art.'}}
+        self.assertEqual(classify(record).value, 'other')
+
     def test_a_listing_with_no_title_is_unclassified_not_excluded(self):
         self.assertEqual(classify({'title': ''}).status, UNKNOWN)
 
@@ -154,7 +209,8 @@ class RealCases(unittest.TestCase):
     PASTES = ('B01M25SBQ5', 'B000RW5FVA', 'B00295ER76', 'B0GNMRKPGQ',
               'B0GNMSWB7D', 'B0DHS9JHLJ', 'B01LB62GQ2', 'B01LB4QIEU',
               'B071JNV24H', 'B001NYY87I', 'B0FSRM9TBK', 'B0055Y6M7Q',
-              'B076HTCT4J')
+              'B076HTCT4J', 'B0BJRG3K8Y', 'B0GXK9CM2D', 'B0H94J1QZW',
+              'B087WQJQDS', 'B086BX8M3C')
     NOT_PASTES = ('B097C8JJY4', 'B0D1RJ1HLC', 'B00CSRY8OC', 'B0FJG6YJ2X',
                   'B08VNDJJS6', 'B01MXXA922', 'B01M6WXE0X', 'B07V48PZY5',
                   'B0CRTZ5ZJN', 'B0C1GHMX8V', 'B0068ICY70', 'B07J2W1S6Q',
@@ -213,6 +269,62 @@ class RealCases(unittest.TestCase):
         self.assertEqual(claim.status, TRUSTED)
         self.assertIn('trocknet', claim.evidence[0].quote.lower())
 
+    def test_a_compound_adjective_states_the_drying_criterion(self):
+        """"Schnelltrocknend" is how vendors usually write it, not "trocknet".
+
+        The first version of the pattern only had the verb with its particle
+        attached, and so missed the drying claim on the smallest pack on the
+        shelf -- the one listing this whole category is most likely to end up
+        recommending. Three shapes are pinned here because each one cost a
+        real product its decisive claim: the compound adjective, an adverb
+        between verb and particle, and an attribute row instead of prose.
+        """
+        for asin, fragment in (('B000RW5FVA', 'schnell trocknend'),
+                               ('B0GXK9CM2D', 'schnell trocknend'),
+                               ('B0H94J1QZW', 'lufttrocknet')):
+            with self.subTest(asin=asin):
+                claim = self.cards[asin]['claims']['dries_out']
+                self.assertEqual(claim.status, TRUSTED)
+                quoted = ' '.join(claim.evidence[0].quote.lower().split())
+                self.assertIn(fragment, quoted)
+
+    def test_a_negated_sentence_is_not_evidence_that_it_dries(self):
+        """"Trocknet nicht ein im Eimer" is a storage claim, not a drying one.
+
+        The same listing states both that and "Abtrocknungsverhalten: schnell
+        trocknend", and Amazon prints the negated bullet first. The claim has
+        to be decided by the sentence that answers the question rather than by
+        the sentence that came first, so negated hits are dropped and the
+        search continues past them.
+        """
+        claim = self.cards['B0BJRG3K8Y']['claims']['dries_out']
+        self.assertEqual(claim.status, TRUSTED)
+        for evidence in claim.evidence:
+            self.assertNotIn('nicht', evidence.quote.lower())
+        self.assertIn('trocknend', claim.evidence[0].quote.lower())
+
+    def test_a_paste_sold_on_staying_lubricating_is_adverse(self):
+        """The failure mode, in the vendor's own words rather than by title.
+
+        LIQUI MOLY LM 48 is titled "Montagepaste", carries no tyre word and no
+        declared mineral-oil base, and is 50 g -- so pack-size ranking puts it
+        near the top of exactly this use case's shortlist. What disqualifies
+        it is on the page: wear protection and a low friction coefficient are
+        properties of a film that is still there.
+        """
+        claims = self.cards['B00295ER76']['claims']
+        self.assertEqual(claims['permanent_lubricant'].status, TRUSTED)
+        self.assertIn('verschleißschutz',
+                      claims['permanent_lubricant'].evidence[0].quote.lower())
+        self.assertIn('permanent_lubricant',
+                      self.cards['B00295ER76']['suitability']['adverse'])
+
+    def test_an_attribute_row_can_carry_the_rubber_claim(self):
+        """A filled-in "Compatible Material: Gummi" row, quoted as just that."""
+        claim = self.cards['B000RW5FVA']['claims']['rubber_safe']
+        self.assertEqual(claim.status, TRUSTED)
+        self.assertTrue(claim.evidence[0].field.startswith('raw_tables.'))
+
     def test_an_unstated_criterion_is_not_claimed_rather_than_false(self):
         claims = self.cards['B01M25SBQ5']['claims']
         self.assertEqual(claims['dries_out'].status, NOT_CLAIMED)
@@ -227,12 +339,44 @@ class RealCases(unittest.TestCase):
             self.assertTrue(any('kit' in note for note in value.notes))
 
     def test_ranking_prefers_the_smallest_pack(self):
+        """The 5 g tube, which is what this ranking exists to find.
+
+        It is also the case that showed the ranking dropping exactly the
+        product it was built to surface: its title is "Tip Top REMAXX Bike
+        Montage Fluid Schwarz Einheitsgröße" and its size field says
+        "Einheitsgröße", so until bullets were read for corroboration the pack
+        size stayed unverified and unverified values are not ranked.
+        """
         cards = [self.cards[asin] for asin in self.PASTES]
         text = report.rank_text(cards)
         self.assertIn('ranked by pack size (lower first)', text)
         first = [line for line in text.splitlines()
                  if line.strip().startswith('1.')][0]
-        self.assertIn('B000RW5FVA', first)
+        self.assertIn('B087WQJQDS', first)
+        self.assertIn('5 g', first)
+
+    def test_a_pack_size_stated_only_in_a_bullet_still_counts(self):
+        """"5 g Tube" in a feature bullet, and nowhere structured."""
+        quantity = self.cards['B087WQJQDS']['axes']['quantity']
+        self.assertEqual(quantity.status, TRUSTED)
+        self.assertEqual(quantity.value, 5.0)
+        self.assertTrue(any(e.field.startswith('content.feature_bullets')
+                            for e in quantity.evidence))
+
+    def test_a_millilitre_bullet_does_not_confirm_a_gram_total(self):
+        """Prose mixes units, and 50 ml is not 50 g without a density.
+
+        Found while widening corroboration to bullets: a carbon paste filed
+        as 50 g was promoted to trusted by a bullet reading "50ml", and a
+        260 g shipping weight by a description reading "250 ml".
+        """
+        for asin in ('B0F1613PQ3', 'B0FSJP27CR'):
+            with self.subTest(asin=asin):
+                record = self.records.get(asin)
+                if record is None:
+                    continue
+                self.assertNotEqual(
+                    evaluate(record)['axes']['quantity'].status, TRUSTED)
 
     def test_price_per_kilogram_is_shown_and_refused_as_a_ranking(self):
         axis = CATEGORY.axis('price_per_base')
