@@ -7,6 +7,10 @@
 
 ## What It Does
 
+The proposed transition to agent-operated research and maintenance is in
+[AGENT_TRANSITION_PLAN.md](AGENT_TRANSITION_PLAN.md), grounded in the current
+codebase and staged acceptance criteria.
+
 A product-research platform for Amazon, built in three layers that can be
 worked on separately:
 
