@@ -28,6 +28,15 @@ QUANTITY_TOLERANCE = 0.15
 
 _UNIT_GRAMS = {'g': 1.0, 'gr': 1.0, 'gramm': 1.0, 'kg': 1000.0,
                'ml': 1.0, 'l': 1000.0}
+# Which dimension each unit measures. `_UNIT_GRAMS` deliberately maps
+# millilitres onto grams so one arithmetic path serves both, and for a *total*
+# that is harmless -- the unit travels beside the number. For a corroboration
+# it is not: "50 ml" in a bullet does not confirm a 50 g attribute row unless
+# the density happens to be 1, and the comparison layer already refuses to set
+# a gram pack against a millilitre one. So a statement may only ever confirm a
+# total measured in its own dimension.
+_UNIT_DIMENSION = {'g': 'mass', 'gr': 'mass', 'gramm': 'mass', 'kg': 'mass',
+                   'ml': 'volume', 'l': 'volume'}
 _UNIT_RE = '|'.join(sorted(_UNIT_GRAMS, key=len, reverse=True))
 # Anchoring a count: "\b" alone is not enough, because the engine happily
 # backtracks "500" down to "50" to satisfy a following lookahead, which turned
@@ -214,18 +223,44 @@ def single_unit_weights(record):
     Measured: without it, 2 of 43 tyre mounting pastes had a confirmable pack
     size, because the category simply does not use multipack phrasing -- it
     writes "Reifenmontagepaste 5 kg" and means it.
+
+    The **feature bullets and the description** are read for the same reason,
+    and the case that forced it is the sharpest this category has produced. A
+    5 g tube of bicycle mounting gel -- the smallest pack in a 127-record
+    corpus, on a shelf of five-kilogram tubs, for a user who needs a few grams
+    every two years -- states its size in a bullet ("5 g Tube") and in the
+    description, and nowhere else: its title is "Tip Top REMAXX Bike Montage
+    Fluid Schwarz Einheitsgröße" and its size field says "Einheitsgröße". So
+    the one product the ranking existed to surface was the one product the
+    ranking dropped, and it was dropped for lacking a second statement that
+    was on the page twice.
+
+    Prose is noisier than a size field, which is why the asymmetry above is
+    load-bearing rather than incidental: a bullet may only ever confirm a
+    total the attribute table already states, never contradict one and never
+    supply one on its own. Measured over 127 mounting-paste and 25 dry-pasta
+    records, reading them promotes 6 quantities from unverified to trusted,
+    changes no value, disputes nothing, and leaves dry pasta untouched.
     """
-    title = record.get('title') or ''
-    size_name = (record.get('package') or {}).get('size_name') or ''
-    label = variation.size_label(record)
-    texts = [('title', title), ('package.size_name', size_name),
-             ('variation.size_name', label)]
+    texts = [('title', record.get('title') or ''),
+             ('package.size_name',
+              (record.get('package') or {}).get('size_name') or ''),
+             ('variation.size_name', variation.size_label(record))]
+    content = record.get('content') or {}
+    texts.extend((f'content.feature_bullets[{index}]', bullet)
+                 for index, bullet in enumerate(
+                     content.get('feature_bullets') or []))
+    texts.append(('content.description', content.get('description') or ''))
     if _states_a_pack_count(record, [text for _, text in texts]):
         return []
 
+    wanted = _UNIT_DIMENSION.get(
+        ((record.get('package') or {}).get('total_quantity_unit') or '').lower())
     found = []
     for source, text in texts:
         for match in _ANY_WEIGHT.finditer(text or ''):
+            if wanted and _UNIT_DIMENSION.get(match.group(2).lower()) != wanted:
+                continue
             grams = _grams(match.group(1), match.group(2))
             if grams:
                 found.append((grams, Evidence(source, match.group(0))))

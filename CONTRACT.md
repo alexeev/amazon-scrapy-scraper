@@ -59,7 +59,7 @@ disappearing, so consumers can index without guards.
 |---|---|
 | envelope | `schema_version`, `fetched_at` |
 | lineage | `marketplace`, `asin`, `product_url`, `canonical_url`, `search_query`, `search_page`, `search_position`, `run_id`, `locale`, `accept_language` |
-| core | `title`, `brand`, `byline_text`, `brand_url`, `price{amount,currency,text}`, `unit_price{amount,unit,text}`, `rating{value,count,text,count_text}`, `availability`, `seller`, `breadcrumbs[]` |
+| core | `title`, `brand`, `byline_text`, `brand_url`, `price{amount,currency,text,range?}`, `unit_price{amount,unit,text}`, `rating{value,count,text,count_text}`, `availability`, `seller`, `breadcrumbs[]` |
 | package | `item_weight_*`, `package_weight_*`, `unit_count_*`, `volume_*`, `item_count`, `size_name`, `dimensions`, `total_quantity_base`, `total_quantity_unit`, `total_quantity_source` |
 | content | `feature_bullets[]`, `description`, `important_information[{heading,text}]`, `aplus{module_types,headings,text,text_length,images,tables}` |
 | food | `ingredients{text,source}`, `allergens[]`, `nutrition{source,basis_text,per_100g,rows,derived}` |
@@ -315,7 +315,8 @@ May change without a bump, because no correct consumer can depend on it:
 | schema v3 | `variation`: the twister matrix, decoded verbatim (R1) |
 | **schema v4** | removed `food.nutrition.confidence`; `package.total_quantity_unit` now follows the row the total came from (R2) |
 | **schema v5** | added `reviews`: the complete ratings histogram and the sample of cards the PDP renders (R5). **Purely additive** — every schema-4 field keeps its name and meaning, and the corpus regression diff touched only `reviews.*` and `extraction.blocks_present` |
-| **contract v1** | first published validated record (R2); extended in R5 with `review_rating`, `review_negative_share` and `review_sample`, which add fields without changing any existing one |
+| **schema v6** | `price.range`, and `price.amount` is no longer filled from one end of a price range. A variation parent with no size selected renders "5,63€ - 26,15€" in its own price container; the extractor published 5,63 EUR as the price of a listing that cost 9,98. Additive for every record that has a price; the 7 records in the mounting-paste sets that had a *fabricated* one now correctly have none |
+| **contract v1** | first published validated record (R2); extended in R5 with `review_rating`, `review_negative_share` and `review_sample`, which add fields without changing any existing one. A `price.range` reads as `unknown` with the range as its evidence — it adds no field to the validated record, because "we do not know" was already expressible |
 
 ---
 

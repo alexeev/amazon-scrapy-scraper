@@ -258,6 +258,40 @@ class PdpComposition(unittest.TestCase):
         self.assertEqual(price['amount'], 3.39)
         self.assertEqual(price['currency'], 'EUR')
 
+    def test_a_price_range_is_not_published_as_a_price(self):
+        """A variation parent with nothing selected renders a range.
+
+        The container is the page's own and entirely legitimate, so scoping
+        the search to a real price container -- the fix for the *previous*
+        price bug, two tests up -- does nothing here. Reading the first
+        `.a-offscreen` out of it published the cheapest variant in the family
+        as this listing's price: 5,63 € for a tin that cost 9,98 €.
+        """
+        html = ('<div id="productTitle">Montagefluid</div>'
+                '<div id="corePrice_desktop"><span class="a-price-range">'
+                '<span class="a-price"><span class="a-offscreen">5,63€</span>'
+                '</span><span class="a-price-dash">-</span>'
+                '<span class="a-price"><span class="a-offscreen">26,15€</span>'
+                '</span></span></div>')
+        price = self.extract(html)['price']
+        self.assertNotIn('amount', price)
+        self.assertEqual(price['range'], [5.63, 26.15])
+        self.assertEqual(price['currency'], 'EUR')
+        self.assertIn('26,15', price['text'])
+
+    def test_a_single_price_beside_a_range_elsewhere_is_still_a_price(self):
+        """The guard must not cost every ordinary listing its price."""
+        html = ('<div id="productTitle">Paste</div>'
+                '<div id="corePrice_feature_div"><span class="a-price">'
+                '<span class="a-offscreen">10,95 €</span></span></div>'
+                '<div id="similar"><span class="a-price-range">'
+                '<span class="a-price"><span class="a-offscreen">1,00€</span>'
+                '</span><span class="a-price"><span class="a-offscreen">'
+                '2,00€</span></span></span></div>')
+        price = self.extract(html)['price']
+        self.assertEqual(price['amount'], 10.95)
+        self.assertNotIn('range', price)
+
     def test_empty_page_yields_a_record_not_an_exception(self):
         record = self.extract('<html><body></body></html>')
         self.assertEqual(record['extraction']['errors'], [])

@@ -298,6 +298,34 @@ class PackQuantity(unittest.TestCase):
 
 class Pricing(unittest.TestCase):
 
+    def test_a_price_range_is_unknown_and_says_what_it_saw(self):
+        """Neither end of a range is what this ASIN costs.
+
+        Reported by a reader who opened the recommended listing and found
+        that no size selection produced the price the report quoted. The
+        extractor now hands the range over intact; this layer must refuse to
+        rank on it without throwing away the one figure the page does state.
+        """
+        data = record(title='Montagefluid Easy Fit',
+                      price={'currency': 'EUR', 'text': '5,63€ - 26,15€',
+                             'range': [5.63, 26.15]})
+        value = validate(data, PASTA).price
+        self.assertEqual(value.status, UNKNOWN)
+        self.assertFalse(value.usable)
+        self.assertTrue(any('5.63-26.15' in note for note in value.notes),
+                        'the range itself should survive into the note')
+        self.assertEqual(value.evidence[0].quote, '5,63€ - 26,15€')
+
+    def test_a_range_leaves_no_price_per_kilogram_behind(self):
+        """The derivation must not quietly use an end of the range."""
+        data = record(title='Montagefluid Easy Fit 50 ml',
+                      price={'currency': 'EUR', 'text': '5,63€ - 26,15€',
+                             'range': [5.63, 26.15]},
+                      package={'total_quantity_base': 50.0,
+                               'total_quantity_unit': 'ml',
+                               'total_quantity_source': 'unit_count'})
+        self.assertIsNone(validate(data, PASTA).price_per_base.value)
+
     def test_disputed_quantity_disputes_the_price(self):
         data = record(title='16x Garofalo Fusilli Packung mit 500g',
                       price={'amount': 31.28, 'currency': 'EUR'},

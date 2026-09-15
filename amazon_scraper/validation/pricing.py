@@ -3,10 +3,18 @@
 Two figures, and the difference between them is the whole of this module.
 
 The **price** is an observation of the offer. Amazon computes it, we read it,
-and there is nothing on the page to check it against. The one failure mode
-ever measured was an extraction bug -- an unscoped selector picking a
-neighbouring product's price out of a carousel -- and it was fixed where it
-belonged, by reading only from a real price container.
+and there is nothing on the page to check it against -- which makes the two
+failure modes measured so far both extraction bugs, and worth naming here
+because this module cannot catch either one on its own.
+
+The first was an unscoped selector picking a neighbouring product's price out
+of a carousel, fixed by reading only from a real price container. The second
+survived that fix and was found by a reader who opened the page: a variation
+parent with no size chosen renders a *range* in its own, entirely legitimate
+price container, and the extractor published the low end of it as the price.
+The container was right; what was in it was not a price. Ranges now arrive
+here as `price.range` with no `amount`, and this module reports them as
+unknown, with the range as the evidence.
 
 The **price per unit of content** is a derivation, and derivations are where
 this repository's worst numbers came from. It rests on the pack size, which
@@ -103,10 +111,32 @@ def price(record):
     absent price is ``unknown``, and is common: on the R3 verification crawl
     141 of 195 records had one, because the other 54 had no purchasable offer
     at the time.
+
+    A **price range** is unknown too, and is its own case. A variation parent
+    with nothing selected renders "5,63€ - 26,15€", and neither end is what
+    this ASIN costs -- the low end is the cheapest variant in the family,
+    which on the listing that exposed this was a different size sold by a
+    different seller.
     """
     block = record.get('price') or {}
     amount = block.get('amount')
     if amount is None:
+        span = block.get('range')
+        if span:
+            # There is a number on the page; it is just not a price. Saying
+            # "no price" here would throw away the one thing the page does
+            # say, and saying 5.63 would be the bug this branch exists for.
+            low, high = span[0], span[-1]
+            currency = block.get('currency') or ''
+            value = Value.unknown(
+                f'this listing states a price range, not a price: '
+                f'{low:g}-{high:g} {currency}'.strip() + '. Amazon shows a '
+                'range when no variant is selected, and the low end is the '
+                'cheapest variant in the family rather than this one')
+            value.evidence.append(
+                Evidence('price.range',
+                         block.get('text') or f'{low:g} - {high:g} {currency}'))
+            return value
         return Value.unknown('Amazon published no price for this listing when '
                              'it was crawled')
     currency = block.get('currency') or ''

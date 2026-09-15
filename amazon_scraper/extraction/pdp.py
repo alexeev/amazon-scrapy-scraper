@@ -34,7 +34,13 @@ from .text import clean, decode_entities, first_text, node_text, parse_quantity
 # The histogram is complete; the sample is a sample, and says so, because
 # /product-reviews/<ASIN> redirects to sign-in and the widget is therefore the
 # only review evidence reachable. See `extraction/reviews.py`.
-SCHEMA_VERSION = 5
+# 6 added `price.range`, and stopped reporting the low end of a price range as
+# `price.amount`. A variation parent with no size selected renders
+# "5,63€ - 26,15€" in its own `#corePrice_desktop`; the extractor read the
+# first `.a-offscreen` in it and published 5,63 EUR as the price of a tin that
+# actually costs 9,98. Both ends are now kept and `amount` is absent, which is
+# what the page means: this listing has no price until a variant is chosen.
+SCHEMA_VERSION = 6
 
 # Free-text nutrition is only trustworthy when a per-100 basis is stated
 # nearby; otherwise the number may be per serving or per pack.
@@ -211,10 +217,21 @@ class PdpExtractor:
     def _price(self, sel):
         text = decode_entities(clean(first_text(
             sel, '#apex-pricetopay-accessibility-label')))
+        span = None
         if not self._has_decimal(text):
-            text = self._price_from_containers(sel) or text
+            text, span = self._price_from_containers(sel) or (text, None)
         if not text:
             return {}
+        if span:
+            # A range is not a price, and the low end of one is nobody's
+            # price. It is published, it is evidence, and it goes in the
+            # record -- but `amount` stays absent, because this listing does
+            # not state what it costs until a variant is chosen.
+            return {
+                'currency': self._currency(text),
+                'text': text,
+                'range': list(span),
+            }
         return {
             'amount': self.mp.number(text),
             'currency': self._currency(text),
@@ -222,13 +239,30 @@ class PdpExtractor:
         }
 
     def _price_from_containers(self, sel):
-        """First usable price inside a real price container."""
+        """``(text, range)`` from the first real price container that has one.
+
+        ``range`` is ``None`` for an ordinary price and a ``[low, high]`` pair
+        when the container holds an ``a-price-range`` -- what Amazon renders
+        as "5,63€ - 26,15€" above "Zum Kauf Größe wählen" on a variation
+        parent whose size nobody has picked yet.
+
+        Scoping the search to a real price container was supposed to be enough
+        (see the comment above `PRICE_CONTAINERS`), and for a *foreign* price
+        it is. It does nothing about this case, because the range is inside
+        the page's own, perfectly legitimate `#corePrice_desktop`: the
+        container is right, and what is in it is not a price.
+        """
         for css in self.PRICE_CONTAINERS:
             for container in sel.css(css):
+                span = self._range_in(container)
+                if span:
+                    low, high = span
+                    return (f'{low} - {high}', [self.mp.number(low),
+                                                self.mp.number(high)])
                 offscreen = decode_entities(clean(
                     first_text(container, '.a-offscreen')))
                 if self._has_decimal(offscreen):
-                    return offscreen
+                    return (offscreen, None)
                 # amazon.com renders the offscreen label without a decimal
                 # separator ("EUR097"); rebuild it from the visible spans,
                 # where the separator is its own element.
@@ -237,10 +271,21 @@ class PdpExtractor:
                 if whole and fraction:
                     symbol = clean(first_text(container, 'span.a-price-symbol'))
                     separator = '' if whole[-1] in '.,' else self.mp.decimal_sep
-                    return f'{whole}{separator}{fraction} {symbol}'.strip()
+                    return (f'{whole}{separator}{fraction} {symbol}'.strip(),
+                            None)
                 if offscreen:
-                    return offscreen
-        return ''
+                    return (offscreen, None)
+        return None
+
+    def _range_in(self, container):
+        """The two ends of an `a-price-range`, or None if it is not one."""
+        for node in container.css('.a-price-range'):
+            ends = [decode_entities(clean(text))
+                    for text in node.css('.a-offscreen::text').getall()]
+            ends = [end for end in ends if self._has_decimal(end)]
+            if len(ends) >= 2:
+                return ends[0], ends[-1]
+        return None
 
     @staticmethod
     def _has_decimal(text):
