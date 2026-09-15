@@ -26,14 +26,22 @@ So a run now owns a directory::
 
 The product feed is unchanged and still goes wherever ``-O`` points. Nothing
 here interprets anything: it records.
+
+Because the pages survive, a finished run re-extracts offline with today's
+extractor and no network at all::
+
+    python -m amazon_scraper.run reextract data/runs/<run_id> \
+        --feed data/products.jsonl -o data/products.v6.jsonl
 """
 
+import argparse
 import datetime as _dt
 import gzip
 import hashlib
 import json
 import pathlib
 import re
+import sys
 
 # Written next to the crawl output rather than inside it, so a feed file can
 # still be moved, appended to or replaced without losing its provenance.
@@ -198,7 +206,6 @@ class CrawlRun:
 def _redact(html):
     """Strip per-session identifiers, reusing the corpus' redaction rules."""
     try:
-        import sys
         corpus = pathlib.Path(__file__).resolve().parent.parent / 'tests' / 'corpus'
         if str(corpus) not in sys.path:
             sys.path.append(str(corpus))
@@ -239,3 +246,152 @@ def stored_pages(directory):
 def read_page(path):
     with gzip.open(path, 'rt', encoding='utf-8') as fh:
         return fh.read()
+
+
+def read_jsonl(path):
+    """Every record of a feed, gzipped or not."""
+    opener = gzip.open if str(path).endswith('.gz') else open
+    with opener(path, 'rt', encoding='utf-8') as fh:
+        return [json.loads(line) for line in fh if line.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Re-extracting a finished run
+# ---------------------------------------------------------------------------
+
+# What a record knows that its page does not. A stored page says everything
+# about the product and nothing about the crawl: which query found it, where
+# it ranked, when it was fetched. Those come from the feed the crawl wrote,
+# and are copied across verbatim rather than guessed at.
+CRAWL_FIELDS = ('marketplace', 'asin', 'product_url', 'canonical_url',
+                'search_query', 'search_page', 'search_position',
+                'run_id', 'locale', 'accept_language', 'fetched_at')
+
+
+def _page_fetched_at(path):
+    """When the page was fetched, which is when it was written down.
+
+    Not when it is being re-read. A re-extraction that stamped itself with
+    today's clock would make every old page look like the freshest evidence
+    in the study, which is the one thing a merge across crawls must not
+    believe.
+    """
+    stamp = _dt.datetime.fromtimestamp(path.stat().st_mtime, _dt.timezone.utc)
+    return stamp.replace(microsecond=0).isoformat()
+
+
+def _lineage(asin, path, manifest, crawled, canonical_url):
+    """The provenance a re-extracted record carries, best available first."""
+    marketplace = manifest.get('marketplace') or ''
+    locale = manifest.get('locale') or {}
+    lineage = {
+        'marketplace': marketplace,
+        'asin': asin,
+        'product_url': f'https://{marketplace}/dp/{asin}',
+        'canonical_url': canonical_url or f'https://{marketplace}/dp/{asin}',
+        'run_id': manifest.get('run_id') or '',
+        'locale': locale.get('language') or '',
+        'accept_language': locale.get('accept_language') or '',
+        'fetched_at': _page_fetched_at(path),
+    }
+    # The crawl's own record wins wherever it has something to say: it is the
+    # only witness to the search that found this page.
+    lineage.update({key: crawled[key] for key in CRAWL_FIELDS
+                    if key in (crawled or {})})
+    return lineage
+
+
+def reextract(directory, feed=None):
+    """Re-extract every page a run retained, with today's extractor.
+
+    Yields ``(asin, record, error)`` per stored page, in ASIN order, and
+    touches no network. ``error`` is a string on the pages that could not be
+    read or parsed at all and ``None`` otherwise; block-level failures are
+    not errors here -- the extractor reports those inside the record, in
+    ``extraction.errors``, and the record is still worth writing.
+
+    ``feed`` is the JSONL the crawl wrote. It is optional, and supplying it
+    is the difference between a record that knows which query found it and
+    one that does not.
+    """
+    from parsel import Selector
+
+    from .extraction import PdpExtractor, for_domain
+
+    directory = pathlib.Path(directory)
+    manifest = load_manifest(directory)
+    extractor = PdpExtractor(for_domain(manifest['marketplace']))
+    crawled = {record['asin']: record
+               for record in (read_jsonl(feed) if feed else [])
+               if record.get('asin')}
+
+    for asin, path in stored_pages(directory).items():
+        try:
+            html = read_page(path)
+            selector = Selector(html)
+            lineage = _lineage(
+                asin, path, manifest, crawled.get(asin),
+                selector.css('link[rel=canonical]::attr(href)').get())
+            record = extractor.extract(selector, html, lineage)
+        except Exception as exc:  # one unreadable page must not end the pass
+            yield asin, None, f'{type(exc).__name__}: {exc}'
+        else:
+            yield asin, record, None
+
+
+def reextract_command(args):
+    """``reextract <run_dir> -o new.jsonl [--feed old.jsonl]``."""
+    feed = read_jsonl(args.feed) if args.feed else []
+    known = {record['asin'] for record in feed if record.get('asin')}
+
+    opener = gzip.open if args.output.endswith('.gz') else open
+    pages = records = block_errors = 0
+    failed, unseen = [], []
+    with opener(args.output, 'wt', encoding='utf-8') as out:
+        for asin, record, error in reextract(args.run_dir, args.feed):
+            pages += 1
+            if error is not None:
+                failed.append(f'{asin} — {error}')
+                continue
+            records += 1
+            block_errors += len(record['extraction']['errors'])
+            if args.feed and asin not in known:
+                unseen.append(asin)
+            out.write(json.dumps(record, ensure_ascii=False) + '\n')
+
+    print(f'{args.run_dir}: {pages} pages, {records} records, '
+          f'{block_errors} extraction errors -> {args.output}')
+    if unseen:
+        print(f'  {len(unseen)} pages had no record in {args.feed}, so they '
+              f'carry the run\'s provenance but not a search query: '
+              + ', '.join(unseen[:6]) + ('…' if len(unseen) > 6 else ''))
+    for line in failed[:10]:
+        print(f'  unreadable: {line}')
+    if len(failed) > 10:
+        print(f'  … and {len(failed) - 10} more unreadable pages')
+    return 1 if failed else 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog='amazon_scraper.run',
+        description='Work with the evidence a finished crawl left behind.')
+    commands = parser.add_subparsers(dest='command', required=True)
+
+    reextraction = commands.add_parser(
+        'reextract', help='re-extract a run\'s retained pages, offline')
+    reextraction.add_argument('run_dir', help='data/runs/<run_id>')
+    reextraction.add_argument('-o', '--output', required=True,
+                              help='JSONL to write; .gz is compressed')
+    reextraction.add_argument('--feed', default='',
+                              help='the JSONL this run wrote, so the new '
+                                   'records keep the search query, position '
+                                   'and fetch time only the crawl knew')
+    reextraction.set_defaults(handler=reextract_command)
+
+    args = parser.parse_args(argv)
+    return args.handler(args)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

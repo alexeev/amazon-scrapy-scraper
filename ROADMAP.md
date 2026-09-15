@@ -15,8 +15,8 @@ item, because the reasoning is what makes the current order defensible.
 | **R3** | Variation-aware product families | **DONE** (one criterion unmet — see below) |
 | **R4** | Amazon.com as a validated marketplace | DEFERRED |
 | **R5** | Reviews as an evidence source | **DONE** (cost estimate was wrong — see below) |
-| **R6** | A command line for the things every category needs | **NEXT** |
-| **R7** | Attributed search: finding a claim vs crediting it | PLANNED |
+| **R6** | A command line for the things every category needs | **DONE** (two of four items were already shipped — see below) |
+| **R7** | Attributed search: finding a claim vs crediting it | **NEXT** |
 | **R8** | Marketplace-aware text matching | PLANNED |
 | **R9** | A second pass for missing prices | PLANNED (behind a decision test) |
 | **R10** | Scoring as a shared facility | **DEFERRED** — one consumer is not two |
@@ -575,32 +575,82 @@ Three findings worth carrying forward.
 
 ## R6 — A command line for the things every category needs
 
-**Status: NEXT.** The cheapest item on this roadmap and the best evidenced:
+**Status: DONE.** The cheapest item on this roadmap and the best evidenced:
 four scripts were written and thrown away in the course of one research
-question. Nothing new is needed, only exposing capability that already exists.
+question. Nothing new was needed, only exposing capability that already
+existed.
 
 ```
 amazon_scraper.run reextract <run_dir> [--feed old.jsonl] -o new.jsonl
 amazon_scraper.analysis <cmd> feed1.jsonl feed2.jsonl ...   # merge by ASIN
-amazon_scraper.analysis shortlist <feeds> --category X --limit N
-amazon_scraper.analysis cards <feeds> ASIN ASIN ASIN
 ```
 
-Offline re-extraction is currently documented in README.md **as a code
-sample** — proof that it works, and a sign that it should be a command. The
-analysis CLI takes exactly one feed path, so a two-crawl study needs a
-merge-by-ASIN loop the user writes themselves.
+Two of the four scripts were built. The other two were not, because they are
+already shipped under another name: `shortlist` is `rank`, and
+`cards ASIN ASIN` is `card`, which has always taken more than one.
+
+**Offline re-extraction was documented in README.md as a code sample** — proof
+that it worked, and a sign that it should be a command. It reads the
+marketplace and locale from the run's own manifest rather than from a flag,
+because re-extracting a German page against an English label vocabulary is
+the silent under-extraction R1's locale gate exists for. `--feed` supplies
+what a stored page cannot know: which query found the product, where it
+ranked, and when it was fetched. Without it those fields are absent rather
+than invented.
+
+**`fetched_at` is carried across, never refreshed.** A re-extraction stamped
+with today's clock would make every old page the freshest evidence in a study
+— which is exactly what the merge below is built to believe.
+
+**The analysis CLI took exactly one feed path**, so a three-crawl study needed
+a merge-by-ASIN loop the user wrote themselves. Every command now takes as
+many feeds as the study has, and the newest `fetched_at` wins — deliberately
+*not* the order the feeds were named in. `data/fusilli_*.jsonl` expands
+alphabetically, which has nothing to do with when each crawl ran, and price
+and availability are precisely the fields an arbitrary argument order would
+get wrong. What the merge did heads the report, so a number in it can be
+traced back to a crawl.
 
 ### Done when
 
-A basmati shortlist of the kind described in [reports/](reports/README.md)
-reproduces from shipped commands, with no scratch scripts.
+- [x] A finished run re-extracts from shipped commands, with no scratch script.
+- [x] Several feeds are one corpus, merged by evidence rather than by argument
+      order.
+- [x] The fusilli shortlist reproduces from one command line.
+
+### Measured on completion
+
+The fusilli study, reproduced from its three committed feeds:
+
+```
+uv run python -m amazon_scraper.analysis rank \
+    data/validation_v3_amazon_de.jsonl data/fusilli_broad.jsonl \
+    data/fusilli_brands.jsonl --category dry_pasta
+```
+
+| | |
+|---|---|
+| Records read | 582 from **3 feeds** |
+| After merge | **471** — matching the study's own count exactly |
+| ASINs crawled more than once | **95**, resolved to their freshest copy |
+| Classified dry pasta | **404**, 67 excluded — again the study's own numbers |
+| Shortlist products reproducing at the published €/kg | **8 of 9** |
+| Offline re-extraction of the broad fusilli run | **224/224 records byte-identical** to what the crawl wrote |
+
+The ninth is Garofalo Fusilli n.63 (`B08JLSVW3J`), and it is not a regression:
+its page states 500 g in Amazon's attribute table and 16 × 500 g in the title,
+so price per kilogram is `DISPUTED` and the ranking refuses to guess. **The
+card already prints both numbers** — "64.98 EUR/kg" beside "if the pack size
+stated on the page is right, this is 4.06 EUR/kg" — which is the honest
+output. Promoting that derivation to a rankable value is a quantity-
+reconciliation decision in the validation layer, and it belongs to R9, not
+here. It affected **4 of the 54 fusilli** in the study.
 
 ---
 
 ## R7 — Attributed search: finding a claim vs crediting it
 
-**Status: PLANNED.** Two categories have now independently hit the same bug:
+**Status: NEXT.** Two categories have now independently hit the same bug:
 text on an Amazon page is not necessarily *about the product the page sells*.
 
 Measured on basmati: searching every text field for the milling degree marked
@@ -671,6 +721,16 @@ the next) and correctly concluded the extractor is right to return nothing.
 The product consequence was never drawn: **a study built from one crawl
 silently omits a third of its category**, and the omission is invisible in the
 output.
+
+A second kind of missing price arrived with the fusilli study and belongs
+here rather than in R6: **4 of 54 fusilli carry a price per kilogram the page
+itself contradicts**, because the seller filled "Anzahl der Einheiten" with
+the weight of one pack and Amazon computed its own €/kg from that same wrong
+row. Garofalo 16 × 500 g reports €64.98/kg, Barilla n.98 10 × 1 kg reports
+€0.37/kg. The card already prints the derivation from the title beside the
+contradiction; what is unresolved is whether that derivation may be *ranked
+on*, which is a quantity-reconciliation decision in the validation layer and
+not a reporting one.
 
 ### Decision test, before building anything
 

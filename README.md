@@ -81,6 +81,7 @@ amazon-scrapy-scraper/
 │   │   └── contract.py          # validate() -> Validated; CONTRACT_VERSION
 │   ├── analysis/                # category knowledge, downstream of the above
 │   │   ├── category.py          # what a category declares: axes, claims
+│   │   ├── feeds.py             # several crawls, one record per ASIN
 │   │   ├── categories/
 │   │   │   ├── dry_pasta.py     # groceries, cheapest trustworthy kilogram
 │   │   │   ├── mounting_paste.py# non-food, smallest pack wins
@@ -96,6 +97,7 @@ amazon-scrapy-scraper/
 │   ├── test_reviews.py          # the histogram, the sample, and the refusals
 │   ├── test_basmati.py          # the third category, and its scoring
 │   ├── test_run.py              # provenance, locale, discovery, page store
+│   ├── test_feeds.py            # several crawls read as one corpus
 │   ├── corpus/                  # 39 saved PDPs + 1 search page + snapshots
 │   └── cases/                   # the records each rule was built on
 ├── data/evidence/               # committed crawl evidence behind the roadmap
@@ -124,8 +126,9 @@ amazon-scrapy-scraper/
 The system Python is never used. `uv` downloads and manages the interpreter
 itself, so a clean machine needs nothing but `uv`.
 
-See **[MIGRATION.md](MIGRATION.md)** for how the project moved here from
-Python 3.9 / Scrapy 2.13, and what was verified in the process.
+The project was moved here from Python 3.9 / Scrapy 2.13. The upper bound on
+Scrapy is deliberate and [pyproject.toml](pyproject.toml) says why: its minor
+releases move defaults that this crawler depends on.
 
 ---
 
@@ -328,12 +331,35 @@ uv run python -m amazon_scraper.analysis compare data/products.jsonl \
 
 # the contract itself, with no category interpretation on top
 uv run python -m amazon_scraper.analysis validated data/products.jsonl
+
+# a study is several crawls: every command takes as many feeds as it needs
+uv run python -m amazon_scraper.analysis rank \
+    data/pasta_v3.jsonl data/fusilli_broad.jsonl data/fusilli_brands.jsonl \
+    --category dry_pasta
 ```
 
 Ranking is offered on **one axis at a time**, never as a composite score: a
 score would have to weigh a trusted price against an unverified protein figure
 and a claim nobody checked, and it could not answer "why is A better than B",
 which is the whole point.
+
+**A research question outlives one crawl, so every command reads several
+feeds** and merges them by ASIN. The winner is the record with the newest
+`fetched_at`, *not* the one from the feed named last: `data/fusilli_*.jsonl`
+expands alphabetically, which has nothing to do with when each crawl ran, and
+price and availability — the two fields this project treats as a snapshot —
+are exactly what an arbitrary argument order would get wrong. The report says
+what the merge did:
+
+```
+471 records from 3 feeds, 95 ASINs superseded by a fresher crawl
+dry pasta: ranked by price per kg (lower first)
+```
+
+`.gz` feeds are read directly, and ASINs for `card` and `compare` go in the
+same positional list — an argument that names a readable file is a feed, one
+shaped like an ASIN is an ASIN, and anything else is an error rather than a
+silently empty analysis.
 
 ### Adding a category
 
@@ -426,18 +452,32 @@ sightings are repeats**, and **32% of placements are sponsored**.
 
 **Pages are retained**, about 390 KB gzipped each, so a later extractor never
 has to ask Amazon twice. Turn it off with `-a keep_pages=0`. Re-extracting a
-whole run offline needs no network:
+whole run offline is a command, and it touches no network:
 
-```python
-from parsel import Selector
-from amazon_scraper import run
-from amazon_scraper.extraction import PdpExtractor, for_domain
-
-extractor = PdpExtractor(for_domain('www.amazon.de'))
-for asin, path in run.stored_pages('data/runs/<run_id>').items():
-    html = run.read_page(path)
-    record = extractor.extract(Selector(html), html, {'asin': asin})
+```bash
+uv run python -m amazon_scraper.run reextract data/runs/<run_id> \
+    --feed data/products.jsonl -o data/products.v6.jsonl
 ```
+
+```
+data/runs/<run_id>: 224 pages, 224 records, 0 extraction errors -> data/products.v6.jsonl
+```
+
+The marketplace and locale come from the run's own manifest, not from a flag:
+re-extracting a German page with an English label vocabulary parses without
+failing and reports almost nothing, which is the failure the locale gate
+exists for.
+
+`--feed` is the JSONL that crawl wrote, and it is what a stored page cannot
+tell you — which query found the product, where it ranked, and when it was
+fetched. Without it those fields are **absent rather than invented**, and
+`fetched_at` falls back to the time the page was written down. A re-extraction
+never stamps itself with today's clock: that would make every old page the
+freshest evidence in a study, which is the one thing the merge across feeds
+must not believe.
+
+Verified on the fusilli crawl: all **224 pages re-extracted to records
+byte-identical** to the ones the crawl itself wrote.
 
 **Locale is checked before the first request.** It used to be implicit — an
 HTTP header in one module, the label vocabulary chosen from the domain in

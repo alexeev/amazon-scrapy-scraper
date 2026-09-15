@@ -4,10 +4,9 @@
 > 2026-09-14, on **Python 3.9.6 / Scrapy 2.13.4**, which is no longer the
 > project runtime. The commands in §1–§4 are kept as written so the reported
 > results stay reproducible in context; for how to set up and run the project
-> today see [README.md](README.md), and for what the move to Python 3.14 /
-> Scrapy 2.19 changed — and what was re-verified against these numbers — see
-> [MIGRATION.md](MIGRATION.md). The crawl behaviour described here, including
-> the search pacing, is unchanged.
+> today see [README.md](README.md). The move to Python 3.14 / Scrapy 2.19
+> re-verified extraction against these numbers and changed none of them. The
+> crawl behaviour described here, including the search pacing, is unchanged.
 
 Scope: verify that this existing Scrapy project can traverse
 `search → pagination → PDP → JSONL` on **amazon.de**, from a local machine,

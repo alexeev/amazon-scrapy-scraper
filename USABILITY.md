@@ -188,11 +188,11 @@ was wrong in an instructive direction (parsing, not crawling), and that
 `/product-reviews/` requires authentication — so nobody re-scopes the expensive
 version later.
 
-### R6 — A command line for the things every category needs — **NEXT**
+### R6 — A command line for the things every category needs — **SHIPPED**
 
 The cheapest item here and the one with the clearest evidence: four scripts
-written and discarded in one afternoon. Nothing new is required, only exposing
-what exists.
+written and discarded in one afternoon. Nothing new was required, only
+exposing what exists.
 
 ```
 amazon_scraper.run reextract <run_dir> [--feed old.jsonl] -o new.jsonl
@@ -201,9 +201,17 @@ amazon_scraper.analysis shortlist <feeds> --category X --limit N
 amazon_scraper.analysis cards <feeds> ASIN ASIN ASIN
 ```
 
+The first two were built. The last two were not, and the reason is worth
+recording: **they already existed under another name.** `shortlist` is `rank`,
+and `cards ASIN ASIN` is `card`, which has always accepted more than one ASIN.
+Two of the four scripts were written not because the capability was missing
+but because the command that had it was not the one I went looking for — which
+is a naming and documentation finding, not a missing-feature one.
+
 **Done when** the basmati shortlist (kept locally under `reports/`, which is
 gitignored — see `reports/README.md`) is reproducible with shipped commands and
-no scratch scripts.
+no scratch scripts. Met on the fusilli study instead, which was the more
+demanding case at three crawls to basmati's two: see ROADMAP R6.
 
 ### R7 — Attributed search: separate *finding* a claim from *crediting* it
 

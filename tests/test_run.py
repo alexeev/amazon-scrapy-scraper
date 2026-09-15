@@ -10,7 +10,10 @@ page, once organic and once sponsored. Every one of those numbers is asserted,
 so a markup change fails here rather than silently degrading a crawl.
 """
 
+import contextlib
+import datetime as _dt
 import gzip
+import io
 import json
 import pathlib
 import sys
@@ -291,6 +294,148 @@ class Discovery(unittest.TestCase):
         self.assertEqual(ranked[0]['grid_position'], 1)
         self.assertGreater(ranked[0]['position'], ranked[0]['grid_position'],
                            'empty ad tiles precede the first real result')
+
+
+class Reextraction(unittest.TestCase):
+    """The page store's whole point, as a command rather than a code sample."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.output = pathlib.Path(self.tmp.name) / 'new.jsonl'
+        self.run = CrawlRun(
+            root=self.tmp.name, spider='amazon_product',
+            marketplace='www.amazon.de',
+            locale={'language': 'de', 'accept_language': 'de-DE,de;q=0.9',
+                    'status': 'matches'},
+            arguments={'keyword': ['spaghetti hartweizen']}).open()
+        self.run.save_page('B088419TTP', read_fixture(A_PDP))
+        self.run.close(finish_reason='finished')
+
+    def feed(self, **overrides):
+        """The feed the crawl would have written for that one page."""
+        record = {'asin': 'B088419TTP', 'search_query': 'spaghetti hartweizen',
+                  'search_page': 2, 'search_position': 17,
+                  'fetched_at': '2026-09-14T22:24:05+00:00',
+                  'canonical_url': 'https://www.amazon.de/dp/B088419TTP'}
+        record.update(overrides)
+        path = pathlib.Path(self.tmp.name) / 'old.jsonl'
+        path.write_text(json.dumps(record) + '\n', encoding='utf-8')
+        return str(path)
+
+    def reextract(self, feed=None):
+        return list(run_module.reextract(self.run.directory, feed))
+
+    def command(self, argv):
+        """``(exit code, what it printed)`` for one run of the command."""
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            code = run_module.main(argv)
+        return code, printed.getvalue()
+
+    def one(self, feed=None):
+        """The record this run's single stored page re-extracts to."""
+        _, record, error = self.reextract(feed)[0]
+        self.assertIsNone(error)
+        return record
+
+    def test_a_run_re_extracts_from_its_own_pages_with_no_network(self):
+        results = self.reextract()
+        self.assertEqual(len(results), 1)
+        asin, record, error = results[0]
+        self.assertIsNone(error)
+        self.assertEqual(asin, 'B088419TTP')
+        self.assertTrue(record['title'])
+        self.assertTrue(record['variation']['values_by_asin'])
+        self.assertEqual(record['extraction']['errors'], [])
+
+    def test_the_marketplace_comes_from_the_manifest_not_from_a_flag(self):
+        """A page re-extracted with the wrong label vocabulary parses without
+        failing and reports almost nothing, which is the failure R1's locale
+        gate exists for. The run already wrote down which marketplace answered."""
+        record = self.one()
+        self.assertEqual(record['marketplace'], 'www.amazon.de')
+        self.assertEqual(record['locale'], 'de')
+        self.assertTrue(record['attributes'])
+
+    def test_provenance_survives_without_a_feed(self):
+        record = self.one()
+        self.assertEqual(record['run_id'], self.run.run_id)
+        self.assertEqual(record['accept_language'], 'de-DE,de;q=0.9')
+        self.assertEqual(record['product_url'],
+                         'https://www.amazon.de/dp/B088419TTP')
+
+    def test_what_only_the_crawl_knew_comes_from_the_feed(self):
+        record = self.one(self.feed())
+        self.assertEqual(record['search_query'], 'spaghetti hartweizen')
+        self.assertEqual(record['search_page'], 2)
+        self.assertEqual(record['search_position'], 17)
+
+    def test_without_a_feed_the_search_context_is_absent_rather_than_invented(self):
+        record = self.one()
+        self.assertNotIn('search_query', record)
+        self.assertNotIn('search_position', record)
+
+    def test_a_re_extracted_record_keeps_the_time_the_page_was_fetched(self):
+        """Stamping a re-extraction with today's clock would make every old
+        page the freshest evidence in a study, which is precisely what the
+        merge across feeds must not believe."""
+        from_feed = self.one(self.feed())
+        self.assertEqual(from_feed['fetched_at'], '2026-09-14T22:24:05+00:00')
+
+        from_page = self.one()
+        written = _dt.datetime.fromtimestamp(
+            run_module.stored_pages(self.run.directory)['B088419TTP']
+            .stat().st_mtime, _dt.timezone.utc)
+        self.assertEqual(from_page['fetched_at'],
+                         written.replace(microsecond=0).isoformat())
+
+    def test_a_feed_entry_for_another_asin_is_not_borrowed(self):
+        record = self.one(self.feed(asin='B000000000'))
+        self.assertNotIn('search_query', record)
+
+    def test_an_unreadable_page_is_reported_and_the_pass_continues(self):
+        pages = self.run.pages_directory
+        (pages / 'B000000000.html.gz').write_bytes(b'not gzip at all')
+        results = {asin: (record, error) for asin, record, error
+                   in self.reextract()}
+        self.assertEqual(len(results), 2)
+        self.assertIsNone(results['B000000000'][0])
+        self.assertTrue(results['B000000000'][1])
+        self.assertIsNotNone(results['B088419TTP'][0], 'one bad page ended the pass')
+
+    def test_the_command_writes_a_feed_and_counts_what_it_did(self):
+        code, printed = self.command(
+            ['reextract', str(self.run.directory), '-o', str(self.output),
+             '--feed', self.feed()])
+        self.assertEqual(code, 0)
+        self.assertIn('1 pages, 1 records, 0 extraction errors', printed)
+        written = run_module.read_jsonl(self.output)
+        self.assertEqual(len(written), 1)
+        self.assertEqual(written[0]['asin'], 'B088419TTP')
+        self.assertEqual(written[0]['search_query'], 'spaghetti hartweizen')
+
+    def test_the_command_compresses_when_asked_to(self):
+        packed = pathlib.Path(self.tmp.name) / 'new.jsonl.gz'
+        self.command(['reextract', str(self.run.directory), '-o', str(packed)])
+        self.assertEqual(len(run_module.read_jsonl(packed)), 1)
+
+    def test_a_page_the_feed_never_mentioned_is_named_not_silently_dropped(self):
+        self.run.save_page('B000U7PDRI', read_fixture(A_PDP))
+        _, printed = self.command(
+            ['reextract', str(self.run.directory), '-o', str(self.output),
+             '--feed', self.feed()])
+        self.assertIn('2 pages, 2 records', printed)
+        self.assertIn('B000U7PDRI', printed)
+
+    def test_the_command_fails_loudly_on_an_unreadable_page(self):
+        (self.run.pages_directory / 'B000000000.html.gz').write_bytes(b'junk')
+        code, printed = self.command(
+            ['reextract', str(self.run.directory), '-o', str(self.output)])
+        self.assertEqual(code, 1)
+        self.assertIn('unreadable: B000000000', printed)
+        self.assertEqual(len(run_module.read_jsonl(self.output)), 1,
+                         'the readable pages are still written')
 
 
 class Variation(unittest.TestCase):
