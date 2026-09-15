@@ -15,7 +15,7 @@ an error. Neither can lose the rest of the record.
 import datetime as _dt
 import re
 
-from . import blocks
+from . import blocks, reviews as _reviews
 from .marketplaces import UNITS, VOLUME_UNITS
 from .text import clean, decode_entities, first_text, node_text, parse_quantity
 
@@ -29,7 +29,12 @@ from .text import clean, decode_entities, first_text, node_text, parse_quantity
 # ones (5/45 versus 2/40). Extraction now reports only `source` -- which
 # structure the numbers came from -- and trust is decided downstream, per
 # value, by `amazon_scraper.validation`. See CONTRACT.md.
-SCHEMA_VERSION = 4
+# 5 added `reviews`: the ratings histogram, and the sample of review cards the
+# PDP renders. Additive -- every schema-4 field keeps its name and meaning.
+# The histogram is complete; the sample is a sample, and says so, because
+# /product-reviews/<ASIN> redirects to sign-in and the widget is therefore the
+# only review evidence reachable. See `extraction/reviews.py`.
+SCHEMA_VERSION = 5
 
 # Free-text nutrition is only trustworthy when a per-100 basis is stated
 # nearby; otherwise the number may be per serving or per pack.
@@ -105,6 +110,10 @@ class PdpExtractor:
                                     feature_bullets, raw_tables))
         media = log.run('media', lambda: self._media(sel, html), {})
         variation = log.run('variation', lambda: blocks.variation_data(html))
+        rating = log.run('rating', lambda: self._rating(sel), {})
+        review_block = log.run(
+            'reviews',
+            lambda: _reviews.extract(sel, mp, rating.get('count')), {})
         package = log.run(
             'package', lambda: self._package(attributes, title), {})
 
@@ -121,7 +130,7 @@ class PdpExtractor:
             'brand_url': clean(sel.css('#bylineInfo::attr(href)').get() or ''),
             'price': log.run('price', lambda: self._price(sel), {}),
             'unit_price': log.run('unit_price', lambda: self._unit_price(sel), {}),
-            'rating': log.run('rating', lambda: self._rating(sel), {}),
+            'rating': rating,
             'availability': clean(first_text(
                 sel, '#availability span', '#availability')),
             'seller': clean(first_text(
@@ -147,6 +156,7 @@ class PdpExtractor:
             'attribute_sources': sources,
             'media': media,
             'variation': variation or {},
+            'reviews': review_block or {},
             'extraction': log.as_dict(),
         })
         return record

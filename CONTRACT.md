@@ -5,7 +5,7 @@ before either of those changes. Two artefacts are published here:
 
 | Artefact | Version | Produced by | Answers |
 |---|---|---|---|
-| **Product record** | `SCHEMA_VERSION = 4` | `amazon_scraper.extraction` | what the page says |
+| **Product record** | `SCHEMA_VERSION = 5` | `amazon_scraper.extraction` | what the page says |
 | **Validated record** | `CONTRACT_VERSION = 1` | `amazon_scraper.validation` | how much of that holds up |
 
 They are versioned separately because they change for different reasons and
@@ -15,7 +15,7 @@ moves the second.
 
 ```text
 extraction  ──►  validation  ──►  category analysis  ──►  report
-schema v4        contract v1      analysis/categories/    analysis/report.py
+schema v5        contract v1      analysis/categories/    analysis/report.py
 ```
 
 ---
@@ -50,7 +50,7 @@ So v4 removes `confidence` and the contract splits it in two:
 
 ---
 
-## 2. The product record (schema v4)
+## 2. The product record (schema v5)
 
 One JSON object per line. Every group degrades to `{}` / `[]` rather than
 disappearing, so consumers can index without guards.
@@ -66,6 +66,7 @@ disappearing, so consumers can index without guards.
 | attributes | `attributes{}` (canonical), `raw_tables{}` (verbatim), `attribute_sources{}` |
 | media | `images[{url,variant,alt,thumb}]`, `primary_image`, `image_count`, `image_source` |
 | variation | `dimensions[]`, `display_labels{}`, `variation_values{}`, `values_by_asin{asin:[…]}`, `current_asin`, `parent_asin`, `total_variations` — decoded verbatim, never interpreted |
+| reviews | `histogram_percent{five_star…one_star}`, `sample[]`, `sample_size`, `sample_home`, `rating_count`, `sample_source` |
 | diagnostics | `extraction{blocks_present[],blocks_absent[],errors[]}` |
 
 `nutrition.per_100g` uses canonical keys: `energy_kj`, `energy_kcal`,
@@ -74,6 +75,36 @@ disappearing, so consumers can index without guards.
 
 `nutrition.source` is one of `nutrition_card`, `attributes`, or `text:<field>`
 — **which structure the numbers came from, and nothing more**.
+
+### `reviews` — one complete structure and one sample, never confused
+
+Added in v5. The two halves of this block have very different evidential
+weight and the names say so.
+
+`histogram_percent` is **complete**: five whole-percent shares covering every
+rating the listing ever received. Measured over the 38 corpus pages that carry
+one, it sums to exactly 100 on **every** record and reconstructs Amazon's
+published average to within **0.08 stars**. It is therefore an independent
+statement of the same fact the average asserts, and the validation layer uses
+it to promote the average under the ordinary corroboration rule.
+
+`sample` is **8–13 review cards Amazon chose**, out of a `rating_count` often
+in the thousands. Each card carries `rating`, `title`, `text`, `date`,
+`country`, `home_marketplace`, `variant`, `verified` and `helpful_votes`. Three
+of those exist because the page merges things a reader should not:
+
+* `home_marketplace: false` marks the "reviews from other countries" section —
+  a different marketplace's listing, machine-translated. **82 of 277 corpus
+  cards (30%)** are foreign.
+* `variant` is Amazon's format strip ("Größe: 5 kg (1er Pack)"). Reviews are
+  pooled across every pack size of a parent ASIN, and sometimes across
+  different products.
+* `verified` is Amazon's purchase badge. 271 of 277 corpus cards carry it, so
+  a listing where most do not is an outlier worth noticing.
+
+`sample_source` is `'pdp_widget'` and is named rather than implied: this is the
+only review data reachable without an account, because `/product-reviews/<ASIN>`
+redirects to sign-in. **No rate may be computed from `sample`.**
 
 `package.total_quantity_base` is grams or millilitres, and
 `total_quantity_unit` says which. The unit follows the attribute row the total
@@ -108,6 +139,20 @@ validated.as_dict()              # JSON-serialisable, snapshot-tested
 | `price` | `Value` | what the listing costs |
 | `price_per_base` | `Value` | price per kilogram or per litre, following the pack's unit |
 | `nutrition` | `{key: Value}` | per 100 g; `{}` for anything that is not food |
+| `review_rating` | `Value` | average stars; `trusted` only when the histogram corroborates it and the rating count is not trivially small |
+| `review_negative_share` | `Value` | share of all ratings at 1–2★, from the complete histogram — the only review figure entitled to be read as a rate |
+| `review_sample` | `Value` | the rendered cards; **never better than `unverified`**, carrying every caveat that limits reading them |
+
+`Validated` also exposes `search_reviews(pattern, …)` and
+`review_signal(pattern, label, …)`, kept deliberately separate from `search()`,
+which walks the *vendor's* words. A producer's claim and a reader's experience
+of it are different kinds of evidence, and a hunter that merged them would let
+marketing copy corroborate itself.
+
+The asymmetry between the two is the part worth stating: a vendor controls the
+whole page, so a claim absent from it is `not_claimed` — weak evidence, but
+evidence. Buyers control nothing, since Amazon selects which cards to render,
+so a complaint absent from the sample is `unknown`.
 | `record` | dict | the record it was built from, for category text search |
 
 ### `Value`
@@ -269,7 +314,8 @@ May change without a bump, because no correct consumer can depend on it:
 | schema v2 | crawl provenance: `run_id`, `locale`, `accept_language` (R1) |
 | schema v3 | `variation`: the twister matrix, decoded verbatim (R1) |
 | **schema v4** | removed `food.nutrition.confidence`; `package.total_quantity_unit` now follows the row the total came from (R2) |
-| **contract v1** | first published validated record (R2) |
+| **schema v5** | added `reviews`: the complete ratings histogram and the sample of cards the PDP renders (R5). **Purely additive** — every schema-4 field keeps its name and meaning, and the corpus regression diff touched only `reviews.*` and `extraction.blocks_present` |
+| **contract v1** | first published validated record (R2); extended in R5 with `review_rating`, `review_negative_share` and `review_sample`, which add fields without changing any existing one |
 
 ---
 

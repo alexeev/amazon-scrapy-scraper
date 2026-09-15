@@ -22,7 +22,7 @@ over the same code and shown which parts needed to know what the product was.
 The answer was: the plausibility bands, and nothing else.
 """
 
-from . import nutrition, pricing, quantity, variation
+from . import nutrition, pricing, quantity, reviews, variation
 from .contract import (CONTRACT_VERSION, CategoryProfile, Validated, validate)
 from .evidence import (ATTRIBUTES, DERIVED, DISPUTED, Evidence, NOT_CLAIMED,
                        PUBLISHED, SOURCES, STATUSES, STRUCTURED, TEXT, TRUSTED,
@@ -32,6 +32,6 @@ __all__ = [
     'ATTRIBUTES', 'CONTRACT_VERSION', 'CategoryProfile', 'DERIVED', 'DISPUTED',
     'Evidence', 'NOT_CLAIMED', 'PUBLISHED', 'SOURCES', 'STATUSES',
     'STRUCTURED', 'TEXT', 'TRUSTED', 'UNKNOWN', 'UNVERIFIED', 'Validated',
-    'Value', 'nutrition', 'pricing', 'quantity', 'search', 'validate',
-    'variation',
+    'Value', 'nutrition', 'pricing', 'quantity', 'reviews', 'search',
+    'validate', 'variation',
 ]

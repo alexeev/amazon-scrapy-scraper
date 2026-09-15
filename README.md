@@ -20,7 +20,8 @@ worked on separately:
   product category either.
 - **Category analysis** — the only layer that knows what the product *is*:
   what counts as one, which of the vendor's claims matter, and what "better"
-  means. Two shipped: **dry pasta** and **tyre mounting paste**.
+  means. Three shipped: **dry pasta**, **tyre mounting paste** and
+  **basmati rice**.
 
 Dry pasta is the first real use case, not the boundary of the design. Adding
 a category is one module; adding a marketplace is a profile entry.
@@ -38,8 +39,12 @@ a category is one module; adding a marketplace is a profile entry.
   before de-duplication, and the retained page behind every record.
 - **Offline re-extraction** — a new field costs no new crawl.
 - **Category-general** — the acquisition, extraction and validation layers
-  never learn what good pasta is. Two categories prove it rather than assert
+  never learn what good pasta is. Three categories prove it rather than assert
   it.
+- **Reviews as a separate evidence class** — the complete ratings histogram
+  (which may support a rate) and the sample of cards Amazon renders (which may
+  not), kept apart on purpose. Both come out of HTML already retained: no
+  extra request.
 - **Regression-tested against reality** — 39 saved real product pages, pinned
   field by field for both extraction and validation output.
 - Works on amazon.de without a proxy or a browser; ScrapeOps proxy and
@@ -64,19 +69,22 @@ amazon-scrapy-scraper/
 │   │   ├── text.py              # text / number primitives
 │   │   ├── marketplaces.py      # per-locale labels, currency, formats
 │   │   ├── blocks.py            # generic Amazon page structures
+│   │   ├── reviews.py           # ratings histogram + the rendered sample
 │   │   └── pdp.py               # composes one product record
 │   ├── validation/              # the generic layer: the published contract
 │   │   ├── evidence.py          # values carrying source, status and quotes
 │   │   ├── quantity.py          # pack size, reconciled against the page
 │   │   ├── pricing.py           # price, and price per kg / per litre
 │   │   ├── nutrition.py         # nutrition checks, where a food block exists
+│   │   ├── reviews.py           # what a sample of Amazon's choosing may say
 │   │   ├── variation.py         # product families and pack sizes
 │   │   └── contract.py          # validate() -> Validated; CONTRACT_VERSION
 │   ├── analysis/                # category knowledge, downstream of the above
 │   │   ├── category.py          # what a category declares: axes, claims
 │   │   ├── categories/
 │   │   │   ├── dry_pasta.py     # groceries, cheapest trustworthy kilogram
-│   │   │   └── mounting_paste.py# non-food, smallest pack wins
+│   │   │   ├── mounting_paste.py# non-food, smallest pack wins
+│   │   │   └── basmati_rice.py  # authenticity, buyers and external lab data
 │   │   └── report.py            # evidence cards, comparison, ranking
 │   └── settings_baseline.py     # proxy-free local profile
 ├── tests/
@@ -85,6 +93,8 @@ amazon-scrapy-scraper/
 │   ├── test_validation.py       # the generic layer and its contract
 │   ├── test_analysis.py         # dry pasta + the records behind its rules
 │   ├── test_mounting_paste.py   # the second category, and contract discipline
+│   ├── test_reviews.py          # the histogram, the sample, and the refusals
+│   ├── test_basmati.py          # the third category, and its scoring
 │   ├── test_run.py              # provenance, locale, discovery, page store
 │   ├── corpus/                  # 39 saved PDPs + 1 search page + snapshots
 │   └── cases/                   # the records each rule was built on
@@ -270,13 +280,25 @@ A category is the only place that knows what the product is. It supplies
 plausibility data, the claims worth hunting for, and what "better" means —
 and it inherits trust rather than re-deriving it. Two are shipped:
 
-| | `dry_pasta` | `tyre_mounting_paste` |
-|---|---|---|
-| Classified from | breadcrumbs | the **title** — Amazon files this category under four unrelated departments |
-| Ranked on | price per kilogram, cheapest first | **pack size, smallest first** |
-| Price per kg | the axis the category rests on | shown and explicitly refused as a ranking |
-| Nutrition bands | nine | none — it is not food |
-| Price band | €0.80–40.00/kg | none is defensible |
+| | `dry_pasta` | `tyre_mounting_paste` | `basmati_rice` |
+|---|---|---|---|
+| Classified from | breadcrumbs | the **title** — Amazon files this category under four unrelated departments | title + the ingredient declaration, which is what catches a cooked pouch titled "Basmati Reis, 250g" |
+| Ranked on | price per kilogram, cheapest first | **pack size, smallest first** | a **composite score**, decomposed into seven published components |
+| Price per kg | the axis the category rests on | shown and explicitly refused as a ranking | ranked on, but weighted 6 of 100 |
+| Nutrition bands | nine | none — it is not food | eight |
+| Price band | €0.80–40.00/kg | none is defensible | €1.00–40.00/kg |
+| Decisive evidence | on the page | **not stated on 40 of 43 pages** | partly **not on Amazon at all** |
+
+The third category is the one that tested whether "category knowledge" can
+include knowledge Amazon does not have. Basmati is judged on authenticity
+(the EU keeps a register of permitted varieties, and 16% of listings name
+one), on taste (buyers, not vendors) and on contaminants (two published
+German laboratory tests, three products, and 236 unknowns). It is also the
+only category that scores, and [ROADMAP.md](ROADMAP.md) R10 explains why that
+stays local to it. What the exercise showed about the platform is
+[USABILITY.md](USABILITY.md); the buying recommendation it produced is not
+committed — see [reports/](reports/README.md) for why, and for how to
+regenerate one.
 
 The second one is not a demo. It is the test R2 was waiting for: a non-food,
 sold in tubs, tubes and aerosols, where a five-kilogram workshop tub is the

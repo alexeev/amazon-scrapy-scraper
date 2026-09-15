@@ -50,3 +50,10 @@ data/evidence/*
 !data/evidence/*.json
 !data/evidence/*.md
 *.jsonl
+
+# Purchase advice reports. Output, not source: each one is a snapshot of one
+# marketplace on one day, and a stale recommendation that still looks
+# authoritative is worse than none. The README stating the convention is kept;
+# the reports are not. See reports/README.md.
+reports/*
+!reports/README.md

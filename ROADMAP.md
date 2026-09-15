@@ -14,7 +14,12 @@ item, because the reasoning is what makes the current order defensible.
 | **R2** | Generic validation layer + published extraction contract | **DONE** |
 | **R3** | Variation-aware product families | **DONE** (one criterion unmet — see below) |
 | **R4** | Amazon.com as a validated marketplace | DEFERRED |
-| **R5** | Reviews as an evidence source | DEFERRED |
+| **R5** | Reviews as an evidence source | **DONE** (cost estimate was wrong — see below) |
+| **R6** | A command line for the things every category needs | **NEXT** |
+| **R7** | Attributed search: finding a claim vs crediting it | PLANNED |
+| **R8** | Marketplace-aware text matching | PLANNED |
+| **R9** | A second pass for missing prices | PLANNED (behind a decision test) |
+| **R10** | Scoring as a shared facility | **DEFERRED** — one consumer is not two |
 
 ---
 
@@ -481,15 +486,225 @@ nutrition either converts correctly or returns `unknown`.
 
 ## R5 — Reviews as an evidence source
 
-**Status: DEFERRED**, behind an explicit decision test.
+**Status: DONE.** The decision test passed decisively, and the milestone cost
+roughly a tenth of what this entry budgeted, for a reason worth recording.
 
-Reviews could settle one thing PDP evidence cannot: whether a pasta holds its
-texture and cooking time in practice — i.e. whether a vendor's bronze-die or
-slow-drying claim shows up in outcomes.
+Shipped as `amazon_scraper/extraction/reviews.py` and
+`amazon_scraper/validation/reviews.py`, with `tests/test_reviews.py` (33 tests)
+and schema v5. Driven by the third category, basmati rice, where the properties
+that decide the purchase — does it smell of basmati, does it arrive with moths
+in it — are stated nowhere except in reviews.
 
-**Decision test:** after R0, count comparisons that ended in "both products
-claim the same thing and nothing distinguishes them". Above ~30%, reviews earn
-their crawl-graph expansion.
+### The decision test, run
+
+Threshold was ~30% of comparisons ending in "both claim the same thing and
+nothing distinguishes them". On 239 basmati listings: **137 (57%) claim
+"extra long", 104 (44%) claim a growing region**, and outside price per
+kilogram almost nothing on the page separates them. Far over the bar.
+
+### Why the estimate was wrong, and in which direction
+
+This entry priced reviews as **"crawl-graph expansion"** — following
+`/product-reviews/` pagination. That was wrong twice:
+
+- **The data was already in hand.** Eight to thirteen review cards and the
+  complete ratings histogram are in the PDP HTML the crawler has retained
+  since R1. **Zero additional requests**, and both production crawls were
+  re-extracted offline to get them.
+- **The expensive version is not available at any price.**
+  `/product-reviews/<ASIN>` redirects to sign-in. The PDP widget is the only
+  review evidence reachable without an account, so there is no larger version
+  of this milestone to come back for. Recorded here so nobody re-scopes it.
+
+### What the two structures are, and why they are not interchangeable
+
+| | histogram | rendered sample |
+|---|---|---|
+| Covers | **every rating the listing ever received** | 8–13 cards Amazon selected |
+| Carries | five percentages | the words |
+| Sums to 100 | **38 of 38 corpus pages** | — |
+| Reconstructs the published average | **within 0.08 stars, worst case** | — |
+| May support a rate | **yes** | **never** |
+
+Because the histogram is an independent statement of the same fact the average
+asserts, it promotes the average from `unverified` to `trusted` under the
+layer's existing corroboration rule — no new rule was needed. And because the
+sample is a sample of Amazon's choosing, a complaint found in it establishes
+**presence, never frequency**, which the Value says in its own notes.
+
+### The vocabulary needed no extension, and that is the result
+
+The category needed `not_claimed` and `unknown` to mean opposite things for
+the same missing sentence:
+
+- a **vendor** controls the whole page, so an absent claim is `not_claimed`;
+- **buyers** control nothing — Amazon picked which 13 of 3 446 reviews to
+  render — so an absent complaint is `unknown`.
+
+R2's vocabulary already expressed that. Nothing was added to it.
+
+### Measured on completion
+
+| | |
+|---|---|
+| Corpus pages carrying a review block | **38 of 39** |
+| Pages carrying a histogram | **38** |
+| Review cards extracted | **277** |
+| Written on *another* marketplace | **82 (30%)** — machine-translated onto the page |
+| Carrying a variant label | 201 |
+| Marked verified purchase | 271 |
+| Schema v4 → v5 | **purely additive**; corpus diff touched only `reviews.*` and `blocks_present` |
+
+Three findings worth carrying forward.
+
+- **30% of the "reviews" on an amazon.de page were not written for
+  amazon.de.** They are real, and they are about a different importer, a
+  different batch and occasionally a different product. Counted apart rather
+  than dropped.
+- **Amazon pools reviews across pack sizes, and the page says so if you
+  read the format strip.** Tilda Pure Original's 10 kg listing shows reviews
+  from three pack sizes. This was previously invisible; it is now a flag on
+  the value.
+- **Splitting the search by star rating was not a refinement, it was
+  required.** Searching all reviews for stickiness complaints matches "die
+  Körner kleben überhaupt nicht" — a five-star endorsement — and it was the
+  single commonest false positive in the category. Positive signals are now
+  searched in 4–5★ reviews and negative ones in 1–2★, pinned by test.
+
+---
+
+## R6 — A command line for the things every category needs
+
+**Status: NEXT.** The cheapest item on this roadmap and the best evidenced:
+four scripts were written and thrown away in the course of one research
+question. Nothing new is needed, only exposing capability that already exists.
+
+```
+amazon_scraper.run reextract <run_dir> [--feed old.jsonl] -o new.jsonl
+amazon_scraper.analysis <cmd> feed1.jsonl feed2.jsonl ...   # merge by ASIN
+amazon_scraper.analysis shortlist <feeds> --category X --limit N
+amazon_scraper.analysis cards <feeds> ASIN ASIN ASIN
+```
+
+Offline re-extraction is currently documented in README.md **as a code
+sample** — proof that it works, and a sign that it should be a command. The
+analysis CLI takes exactly one feed path, so a two-crawl study needs a
+merge-by-ASIN loop the user writes themselves.
+
+### Done when
+
+A basmati shortlist of the kind described in [reports/](reports/README.md)
+reproduces from shipped commands, with no scratch scripts.
+
+---
+
+## R7 — Attributed search: finding a claim vs crediting it
+
+**Status: PLANNED.** Two categories have now independently hit the same bug:
+text on an Amazon page is not necessarily *about the product the page sells*.
+
+Measured on basmati: searching every text field for the milling degree marked
+**53 of 239** records parboiled and **29 were wrong** — cross-sell copy ("Neben
+unseren PURE BASMATI Reis haben wir auch bereits vorgekochte …", which marked
+the Stiftung Warentest winner as parboiled), A+ comparison tables listing a
+brand's entire shelf, recipe suggestions, and the outright negation
+"Non-parboiled for authentic basmati". Restricting to title, ingredient
+declaration and attribute rows took it to **0**.
+
+Mounting paste hit the same class of error and solved it positionally, in its
+own module. That is the second occurrence R2's promotion rule waits for.
+
+### Scope
+
+- `search(..., scope='self' | 'page')` in the validation layer. `self` is the
+  fields in which the listing describes its own contents; `page` is
+  everything, which is right for *discovering* a claim and wrong for
+  *attributing* one.
+- Negation-aware matching, so "mineralölfrei" and "Non-parboiled" stop
+  registering as declarations of what they deny. Mounting paste needs this at
+  least as much as basmati: its entire claim set is "free of X".
+- Extend it to external evidence: a listing that names another brand's product
+  in its title must not inherit that brand's laboratory result. A real case —
+  "Tilda Pure Original Basmati Reis (4 x 2kg)", filed under brand **Kajal**,
+  manufacturer **Kajal GMBH**, in a pack size Tilda does not sell.
+
+### Done when
+
+Both existing categories re-run over their saved corpora with no true positive
+lost and the known false ones gone, pinned by test.
+
+---
+
+## R8 — Marketplace-aware text matching
+
+**Status: PLANNED.** `\bword\b` is not a safe default on a compounding
+language.
+
+German compounds the noun: **"Basmatireis" is one word**, and `\bbasmati\b`
+does not match it. Cost, measured: **36 of 239 listings (15%) silently
+classified out**, including `AKASH Basmatireis 1 × 10 kg` — one of only two
+basmatis Stiftung Warentest rated "gut" in 5/2026, and the cheaper of the two.
+
+Nothing failed and nothing looked wrong: a wrongly rejected product is filed
+confidently as `other`, and the summary kept reporting `0 unclassified`. **That
+line reads as a health metric and is not one.**
+
+### Scope
+
+A `Marketplace.word(stem)` helper emitting `\bstem` for German and
+`\bstem\b` for English, so the decision sits beside the other locale
+decisions instead of in every category's regexes. Plus an honest name for the
+`0 unclassified` line, which measures only that the classifier reached a
+verdict.
+
+---
+
+## R9 — A second pass for missing prices
+
+**Status: PLANNED**, behind a decision test.
+
+**73 of 239 basmati (31%) had no purchasable offer at crawl time** — among them
+Rapunzel, Spielberger demeter and two Tilda Pure Original pack sizes. R3
+measured the same volatility on pasta (195/195 priced in one run, 141/195 in
+the next) and correctly concluded the extractor is right to return nothing.
+
+The product consequence was never drawn: **a study built from one crawl
+silently omits a third of its category**, and the omission is invisible in the
+output.
+
+### Decision test, before building anything
+
+Re-fetch the 73 unpriced basmati ASINs once, some hours later, and count how
+many price. **Below ~30% recovered**, those listings are genuinely dormant and
+an automated second pass is not worth its complexity.
+
+---
+
+## R10 — Scoring as a shared facility
+
+**Status: DEFERRED — deliberately, and the reasoning is the point.**
+
+Basmati needed a composite score; `report.py` refuses to offer one, and its
+stated reason is right: a score "could not answer why A is better than B".
+Three properties made one defensible anyway, and all three look general:
+
+- every component published with its evidence, never just the total;
+- a missing input scores **neutral**, never zero — absence of data is not an
+  adverse finding;
+- the total is **shrunk toward neutral in proportion to how much is unknown**,
+  so a listing whose entire case is its own adjectives cannot outrank one with
+  an independent measurement.
+
+The third is not theory. The first draft ranked first a 10 kg bag with **five
+ratings** whose feature bullet claimed every heavy metal was below the limit of
+detection — a sentence no reader can check, scored as though it were a test
+report.
+
+But one category is one data point, and this repository's own experience says
+promotion before a second consumer produces bugs dressed as generalisations —
+in R2, three of the four things the layer "had to learn" were bugs. Dry pasta
+and mounting paste both refuse to score, so there is no second consumer asking.
+It stays in `basmati_rice.py`.
 
 ---
 
@@ -500,7 +715,7 @@ their crawl-graph expansion.
 | Browser automation (Playwright, Selenium) | **REJECTED** | `amazon/challenge/*` becomes non-zero at a meaningful rate, or a field with demonstrated product value is found to exist only after JS execution. Today: 201/201 HTTP 200, zero challenges; the one client-loaded structure found duplicates server-rendered data. |
 | Proxy rotation, fingerprinting | **REJECTED** | Sustained 429/503 on **PDP** requests under current pacing. The measured 503s were a `/s?` burst artifact, fixed by sequential search pacing. |
 | OCR of product / A+ images | **DROPPED** | A named product question is blocked by image-only data. Measured: 0 of 60 bronze-die and 0 of 50 Gragnano claims are A+-image-only. Justifying evidence would be ≥20 records where a **V1 axis** is `unknown` and the value is visible only inside an image. |
-| Reviews | **DEFERRED → R5** | The decision test above. |
+| Reviews | **DONE → R5** | Decision test passed at 57% against a 30% bar. Cost a tenth of the estimate: the data is in the retained PDP HTML, and the larger version is unavailable — `/product-reviews/` needs an account. |
 | Amazon.com completion | **DEFERRED → R4** | A stated user need for US research. |
 | Framework / runtime upgrade | **DEFERRED (maintenance)** | A product goal is blocked by the runtime. The last upgrade silently dropped an attribute table from two corpus pages; the corpus test is the gate. Never mix an upgrade with product work. |
 | `amazon_search.py` | **DROP — delete** | Never. Dead code with hardcoded `.com` URLs and a documented off-by-one; its presence misleads readers about the architecture. |
@@ -562,11 +777,24 @@ before R2 — do not model what nothing reads.
   right products exist and these queries do not surface them) or a category
   ceiling (Amazon listings simply do not say) is now the more interesting
   version of this question, and it is answerable with a hand check.
-- **Experiment:** run the R0 classifier over the 163 records and count
-  distinct producers with bronze-die claims against a manual list of ~15 known
-  quality Italian producers. Zero crawl cost.
-- **Threshold:** fewer than half the known producers appear → discovery, not
-  extraction, is the bottleneck.
+- **Answered in part by R5's category, and the answer is "discovery".** Eight
+  generic queries in German and English, two result pages each, **never
+  surfaced AKASH at all** — the brand took a query naming it. AKASH
+  Basmatireis is one of only two basmatis Stiftung Warentest rated "gut" in
+  5/2026. A researcher who did not already know that result would not have
+  reached the product it recommends.
+- **The sharper question now:** generic queries systematically under-sample
+  **diaspora brands**, which on Amazon.de are a large share of the real shelf
+  in exactly the categories where they matter — rice, pulses, spices, flour.
+  That is a query-design problem and it is not solved by crawling deeper: the
+  broad sweep already went two pages deep per query.
+- **Experiment:** for a category, take the brands that only brand-specific
+  queries discovered, and measure their share of the final shortlist. On
+  basmati: **1 of 8 finalists, and 2 of the 3 products with external
+  laboratory evidence.**
+- **Threshold:** brand-only-discovered products taking more than ~20% of a
+  shortlist → query design becomes a roadmap item, most likely as a
+  brand-expansion pass seeded from the first crawl's own brand field.
 
 ### E4 — Does the trust bar leave enough to compare?
 

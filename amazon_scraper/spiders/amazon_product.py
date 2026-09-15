@@ -101,6 +101,8 @@ COVERAGE_CHECKS = (
     ('images', lambda r: r['media'].get('images')),
     ('breadcrumbs', lambda r: r['breadcrumbs']),
     ('variation', lambda r: r['variation'].get('values_by_asin')),
+    ('review_histogram', lambda r: r['reviews'].get('histogram_percent')),
+    ('review_sample', lambda r: r['reviews'].get('sample')),
 )
 
 

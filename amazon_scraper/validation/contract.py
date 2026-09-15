@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 
 from . import nutrition as _nutrition
 from . import pricing, quantity, variation
+from . import reviews as _reviews
 from .evidence import DISPUTED, Value, search
 
 #: Version of the validated-record shape below. Independent of the extraction
@@ -103,6 +104,15 @@ class Validated:
     #: ``{nutrient key: Value}`` per 100 g; empty for anything that is not food.
     nutrition: dict
 
+    #: The average star rating, promoted only when the histogram agrees.
+    review_rating: Value
+    #: Share of all ratings at one or two stars, from the complete histogram.
+    review_negative_share: Value
+    #: The rendered review cards, never better than unverified. See
+    #: :mod:`amazon_scraper.validation.reviews` for why a sample of Amazon's
+    #: choosing cannot support a frequency claim.
+    review_sample: Value
+
     #: The extraction record this was built from. Category layers search its
     #: text for claims; nothing generic reads it after validation.
     record: dict = field(default_factory=dict, repr=False)
@@ -110,6 +120,19 @@ class Validated:
     def search(self, pattern, limit=3, fields=None):
         """Evidence for `pattern` in this record's text, best source first."""
         return search(self.record, pattern, limit=limit, fields=fields)
+
+    def search_reviews(self, pattern, **kwargs):
+        """Evidence for `pattern` in what *buyers* wrote, not the vendor.
+
+        Kept separate from :meth:`search` on purpose: a producer's claim and a
+        reader's experience of it are different kinds of evidence, and a
+        hunter that merged them would let marketing copy corroborate itself.
+        """
+        return _reviews.search(self.record, pattern, **kwargs)
+
+    def review_signal(self, pattern, label, **kwargs):
+        """A review signal as a Value: found, or explicitly unknown."""
+        return _reviews.signal(self.record, pattern, label, **kwargs)
 
     def as_dict(self):
         return {
@@ -128,6 +151,17 @@ class Validated:
             'price_per_base': self.price_per_base.as_dict(),
             'nutrition': {key: value.as_dict()
                           for key, value in sorted(self.nutrition.items())},
+            'review_rating': self.review_rating.as_dict(),
+            'review_negative_share': self.review_negative_share.as_dict(),
+            # The cards themselves are not serialised -- they are the
+            # record's own text, already on it, and copying them here would
+            # double the size of every validated line for no new fact. What
+            # is serialised is how many there were, and every caveat that
+            # limits reading them.
+            'review_sample': dict(
+                self.review_sample.as_dict(),
+                value=(len(self.review_sample.value)
+                       if self.review_sample.value is not None else None)),
         }
 
 
@@ -147,6 +181,8 @@ def validate(record, profile=NEUTRAL):
     if per_base.status == DISPUTED:
         pricing.alternative_price(record, per_base,
                                   quantity.consensus_hint(record))
+
+    review = _reviews.summary(record)
 
     values = _nutrition.validate(record)
     if values:
@@ -177,5 +213,8 @@ def validate(record, profile=NEUTRAL):
         price=pricing.price(record),
         price_per_base=per_base,
         nutrition=values,
+        review_rating=review['rating'],
+        review_negative_share=review['negative_share'],
+        review_sample=review['sample'],
         record=record,
     )

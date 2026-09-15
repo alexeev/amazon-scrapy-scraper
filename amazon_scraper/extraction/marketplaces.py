@@ -127,6 +127,63 @@ BYLINE_PATTERNS = {
     'en': [r'^brand:\s*', r'^visit the\s*', r"'s store$", r'\s*store$'],
 }
 
+# --- Review vocabulary -----------------------------------------------------
+# The review widget is structurally identical across locales -- the same
+# `data-hook` names -- but everything a reader needs from it is a sentence:
+# where it was written, whether the purchase was verified, how many people
+# found it useful. Those are labels, so they live here with the others.
+
+#: "Bewertet in Deutschland am 6. Juli 2026" -> country, day, month, year.
+REVIEW_DATELINE = {
+    'de': r'Bewertet in\s+(?P<country>.+?)\s+am\s+(?P<day>\d{1,2})\.?\s*'
+          r'(?P<month>[^\s\d]+)\s+(?P<year>\d{4})',
+    'en': r'Reviewed in\s+(?P<country>.+?)\s+on\s+(?:(?P<month>[A-Za-z]+)\s+'
+          r'(?P<day>\d{1,2}),\s*(?P<year>\d{4})'
+          r'|(?P<day2>\d{1,2})\s+(?P<month2>[A-Za-z]+)\s+(?P<year2>\d{4}))',
+}
+
+MONTHS = {
+    'de': ['januar', 'februar', 'märz', 'april', 'mai', 'juni', 'juli',
+           'august', 'september', 'oktober', 'november', 'dezember'],
+    'en': ['january', 'february', 'march', 'april', 'may', 'june', 'july',
+           'august', 'september', 'october', 'november', 'december'],
+}
+
+#: The marketplace's own country, in its own language. A review dateline
+#: naming anything else came from the "reviews from other countries" section:
+#: a different marketplace's listing, machine-translated.
+HOME_COUNTRY = {
+    'amazon.de': 'deutschland', 'amazon.com': 'the united states',
+    'amazon.co.uk': 'the united kingdom', 'amazon.it': 'italien',
+}
+
+VERIFIED_PURCHASE = {
+    'de': ['verifizierter kauf'],
+    'en': ['verified purchase'],
+}
+
+#: "9 Personen fanden dies hilfreich" / "Eine Person fand diese Informationen
+#: hilfreich" -- the singular form spells the number out, so a bare \d+ finds
+#: nothing and the vote is worth 1, not 0.
+HELPFUL_VOTES = {
+    'de': (r'(\d[\d.\s\u00a0]*)\s*Personen fanden', r'^Eine Person fand'),
+    'en': (r'(\d[\d,\s]*)\s*people found', r'^One person found'),
+}
+
+#: "71 Prozent der Bewertungen haben 5 Sterne" on the histogram bar's link.
+HISTOGRAM_LABEL = {
+    'de': r'(?P<percent>\d+)\s*Prozent der Bewertungen haben\s*(?P<stars>\d)',
+    'en': r'(?P<percent>\d+)\s*percent of reviews have\s*(?P<stars>\d)',
+}
+
+#: Trailing UI affordances Amazon renders *inside* the review body.
+REVIEW_BODY_NOISE = {
+    'de': [r'Mehr erfahren', r'Weniger anzeigen', r'Bilder in dieser Rezension',
+           r'Missbrauch melden'],
+    'en': [r'Read more', r'Show less', r'Images in this review',
+           r'Report abuse'],
+}
+
 # Mass/volume units, mapped to a canonical symbol and a factor to grams / ml.
 UNITS = {
     'g': ('g', 1.0), 'gramm': ('g', 1.0), 'gramme': ('g', 1.0),
@@ -207,6 +264,64 @@ class Marketplace:
         for pattern in self._byline_patterns:
             value = pattern.sub('', value).strip()
         return value.strip(' :')
+
+    # -- reviews ----------------------------------------------------------
+
+    def review_dateline(self, text):
+        """"Bewertet in Italien am 11. Juli 2026" -> (country, ISO date, home?).
+
+        ``home`` is False for the "reviews from other countries" section,
+        which Amazon machine-translates onto the page from a *different*
+        marketplace's listing. Those reviews are real, but they are not
+        evidence about what this marketplace sells, so the caller is told
+        which is which rather than having them silently merged.
+        """
+        pattern = REVIEW_DATELINE.get(self.language)
+        match = re.search(pattern, text or '', re.I) if pattern else None
+        if not match:
+            return '', '', None
+        parts = match.groupdict()
+        country = (parts.get('country') or '').strip()
+        day = parts.get('day') or parts.get('day2')
+        month = parts.get('month') or parts.get('month2')
+        year = parts.get('year') or parts.get('year2')
+        iso = ''
+        months = MONTHS.get(self.language, [])
+        normalised = (month or '').strip().lower().rstrip('.')
+        if normalised in months and day and year:
+            iso = f'{int(year):04d}-{months.index(normalised) + 1:02d}-{int(day):02d}'
+        home = HOME_COUNTRY.get(self.host)
+        return country, iso, (country.lower() == home if home else None)
+
+    def is_verified_purchase(self, text):
+        value = (text or '').strip().lower()
+        return any(v in value for v in VERIFIED_PURCHASE.get(self.language, []))
+
+    def helpful_votes(self, text):
+        """Number of "found this helpful" votes, or None when none is shown."""
+        if not text:
+            return None
+        plural, singular = HELPFUL_VOTES.get(self.language, (None, None))
+        if singular and re.search(singular, text.strip(), re.I):
+            return 1
+        match = re.search(plural, text, re.I) if plural else None
+        if not match:
+            return None
+        digits = re.sub(r'[^\d]', '', match.group(1))
+        return int(digits) if digits else None
+
+    def histogram_share(self, label):
+        """("5 stars", 71) from a histogram bar's aria-label, or None."""
+        pattern = HISTOGRAM_LABEL.get(self.language)
+        match = re.search(pattern, label or '', re.I) if pattern else None
+        if not match:
+            return None
+        return int(match.group('stars')), int(match.group('percent'))
+
+    def strip_review_noise(self, text):
+        for noise in REVIEW_BODY_NOISE.get(self.language, []):
+            text = re.sub(noise, ' ', text, flags=re.I)
+        return re.sub(r'\s+', ' ', text).strip()
 
     def number(self, text):
         from .text import parse_number
