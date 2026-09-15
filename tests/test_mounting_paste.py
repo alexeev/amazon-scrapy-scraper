@@ -39,6 +39,39 @@ def load_cases():
         return {record['asin']: record for record in map(json.loads, handle)}
 
 
+class AttributedClaims(unittest.TestCase):
+    def claims(self, text):
+        from amazon_scraper.analysis.categories import mounting_paste
+        from amazon_scraper.validation import validate
+        return mounting_paste.claims(validate({
+            'title': 'Reifenmontagepaste',
+            'content': {'feature_bullets': [text]},
+        }))
+
+    def test_later_drying_claim_in_same_bullet_survives(self):
+        claims = self.claims('Trocknet nicht ein im Eimer. Trocknet schnell ab '
+                             'auf dem Reifen.')
+        self.assertEqual(claims['dries_out'].status, TRUSTED)
+        self.assertIn('Trocknet schnell ab', claims['dries_out'].evidence[0].quote)
+
+    def test_negated_storage_claim_alone_does_not_assert_drying(self):
+        claims = self.claims('Trocknet nicht ein im Eimer.')
+        self.assertEqual(claims['dries_out'].status, NOT_CLAIMED)
+
+    def test_free_of_claim_is_positive_but_its_negation_is_not(self):
+        claims = self.claims('Mineralölfrei und lösungsmittelfrei. '
+                             'Greift Gummi nicht an.')
+        for key in ('mineral_oil_free', 'solvent_free', 'rubber_safe'):
+            self.assertEqual(claims[key].status, TRUSTED)
+        negated = self.claims('Nicht mineralölfrei. Nicht lösungsmittelfrei.')
+        for key in ('mineral_oil_free', 'solvent_free'):
+            self.assertEqual(negated[key].status, NOT_CLAIMED)
+
+    def test_negated_oil_base_is_not_adverse(self):
+        self.assertEqual(self.claims('Ohne Mineralölbasis.')['mineral_oil_base'].status,
+                         NOT_CLAIMED)
+
+
 class Classification(unittest.TestCase):
     """Decided on the title, because the breadcrumbs cannot do it.
 
@@ -302,6 +335,13 @@ class RealCases(unittest.TestCase):
         for evidence in claim.evidence:
             self.assertNotIn('nicht', evidence.quote.lower())
         self.assertIn('trocknend', claim.evidence[0].quote.lower())
+
+    def test_later_aplus_drying_evidence_survives_the_storage_negation(self):
+        claim = self.cards['B0BJRG3K8Y']['claims']['dries_out']
+        later = [e for e in claim.evidence if e.field == 'content.aplus']
+        self.assertEqual(len(later), 1)
+        self.assertIn('langsam trocknend', later[0].quote)
+        self.assertNotIn('trocknet nicht aus', later[0].quote)
 
     def test_a_paste_sold_on_staying_lubricating_is_adverse(self):
         """The failure mode, in the vendor's own words rather than by title.

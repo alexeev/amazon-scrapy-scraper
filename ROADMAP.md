@@ -16,7 +16,7 @@ item, because the reasoning is what makes the current order defensible.
 | **R4** | Amazon.com as a validated marketplace | DEFERRED |
 | **R5** | Reviews as an evidence source | **DONE** (cost estimate was wrong — see below) |
 | **R6** | A command line for the things every category needs | **DONE** (two of four items were already shipped — see below) |
-| **R7** | Attributed search: finding a claim vs crediting it | **NEXT** |
+| **R7** | Attributed search: finding a claim vs crediting it | **DONE** |
 | **R8** | Marketplace-aware text matching | **DONE** |
 | **R9** | A second pass for missing prices | PLANNED (behind a decision test) |
 | **R10** | Scoring as a shared facility | **DEFERRED** — one consumer is not two |
@@ -650,7 +650,7 @@ here. It affected **4 of the 54 fusilli** in the study.
 
 ## R7 — Attributed search: finding a claim vs crediting it
 
-**Status: NEXT.** Two categories have now independently hit the same bug:
+**Status: DONE.** Two categories independently hit the same bug:
 text on an Amazon page is not necessarily *about the product the page sells*.
 
 Measured on basmati: searching every text field for the milling degree marked
@@ -664,24 +664,87 @@ declaration and attribute rows took it to **0**.
 Mounting paste hit the same class of error and solved it positionally, in its
 own module. That is the second occurrence R2's promotion rule waits for.
 
+### Scope review (2026-09-15)
+
+At review, the motivating fixes already shipped with category regressions: basmati's
+`GRAIN_FIELDS` and `_negated`, mounting paste's `NEGATED` drying exclusions,
+and basmati's brand/manufacturer gate for the Tilda/Kajal laboratory result.
+The historical 29 errors are not outstanding defects. The combined saved
+basmati feed now contains 359 records, of which 239 classify as basmati.
+
+What remained was shared search policy and a real gap in the local fixes:
+search selected the first match per field and categories filtered the cropped
+quote afterwards. A negated first mention can hide an affirmative one later
+in the same field; unrelated negations in the quote can also discard it.
+
 ### Scope
 
-- `search(..., scope='self' | 'page')` in the validation layer. `self` is the
-  fields in which the listing describes its own contents; `page` is
-  everything, which is right for *discovering* a claim and wrong for
-  *attributing* one.
-- Negation-aware matching, so "mineralölfrei" and "Non-parboiled" stop
-  registering as declarations of what they deny. Mounting paste needs this at
-  least as much as basmati: its entire claim set is "free of X".
-- Extend it to external evidence: a listing that names another brand's product
-  in its title must not inherit that brand's laboratory result. A real case —
-  "Tilda Pure Original Basmati Reis (4 x 2kg)", filed under brand **Kajal**,
-  manufacturer **Kajal GMBH**, in a pack size Tilda does not sell.
+- Add `search(..., scope='self' | 'page')` to the validation contract, keeping
+  `page` as the compatible default. `self` restricts to title, ingredients
+  and raw attribute rows; `fields` further narrows either scope. This is a
+  conservative field policy, not proof that every sentence concerns this
+  product. Reviews remain a separate search.
+- Add opt-in affirmative matching against full-text match positions, before
+  quote cropping and result limits. Share bounded German/English prefix
+  negations and suffixes such as `mineralölfrei`; preserve affirmative
+  absence claims when the pattern itself includes `ohne` or `frei`.
+  Category-specific exclusion patterns remain data and reject only overlapping
+  matches. Continue through rejected mentions within the same field.
+- Migrate basmati milling/declaration checks and mounting-paste claim search.
+  Keep mounting-paste prose searchable: restricting its drying evidence to
+  `self` would remove legitimate bullets and descriptions. Preserve its
+  positional product classifier and kit caveats.
+- Retain external laboratory matching in basmati: one consumer does not
+  justify a generic external-evidence framework. Test the existing identity
+  gate and use literal whole-brand matching with identity evidence attached.
+
+### Explicitly out of scope
+
+General linguistic negation or cross-sell resolution; reattributing all
+category claims; changing laboratory findings, scoring policy, acquisition,
+marketplace word boundaries or the extraction schema. A brand match does
+not establish that a listing's batch or pack was independently tested.
 
 ### Done when
 
-Both existing categories re-run over their saved corpora with no true positive
-lost and the known false ones gone, pinned by test.
+- [x] Shared search tests cover scopes, intersecting field filters, negation,
+      positive absence claims, later affirmative mentions and quote provenance.
+- [x] Both category suites pin the motivating false positives and retained
+      true positives, including the external identity gate.
+- [x] Offline before/after comparison of saved category feeds accounts for
+      every changed card; no known true positive is lost. This is a regression
+      check, not a claim of measured classification accuracy.
+- [x] The full suite, including extraction/validation snapshots, passes and
+      the public search contract documents the boundaries.
+
+### Measured on completion
+
+All **323 tests pass** (296 before R7), including extraction/validation
+snapshots, all three categories, and the new `tests/test_attributed_search.py`.
+No crawl, dependency upgrade or snapshot regeneration was needed.
+
+Offline comparison covered **1,885 record occurrences across 14 saved files**:
+
+| Saved files | Occurrences | Changed cards |
+|---|---:|---:|
+| Five `basmati_*.jsonl` feeds (all, brands, broad, and v5 variants) | 1,361 | 61 |
+| `paste.jsonl`, `paste_rema.jsonl`, `paste_v2.jsonl`, `paste_v7.jsonl` | 245 | 1 |
+| Four archived mounting-paste feeds, v4–v7 | 245 | 1 |
+| `tests/cases/mounting_paste_v1.jsonl.gz` | 34 | 1 |
+
+These are overlapping feeds, not distinct products. All **64 changed cards**
+only gained evidence; their existing evidence remains intact. The 61 basmati
+cards now quote the brand/manufacturer supporting the existing laboratory
+attribution. The other three occurrences are `B0BJRG3K8Y`: its A+ text says
+`trocknet nicht aus` about storage, then `Abtrocknungsverhalten: langsam
+trocknend` about the same Premium white paste. Search now reaches the latter
+statement and adds it beside the existing bullet evidence.
+
+Removing evidence arrays from the serialized cards makes the complete
+before/after output identical: no changed classification, milling degree,
+claim status, laboratory verdict, score, suitability, measured axis or note.
+New synthetic regressions separately exercise negated absence claims, later
+affirmative mentions, and brand substrings that the saved feeds do not contain.
 
 ---
 

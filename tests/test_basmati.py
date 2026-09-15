@@ -282,6 +282,26 @@ class GrainAndVariety(unittest.TestCase):
             self.grain(title='Laila Golden Sella Basmati Reis 10 kg').value,
             'parboiled')
 
+    def test_later_affirmative_mention_is_not_hidden_by_a_negation(self):
+        value = self.grain(title='Basmati Reis: non-parboiled alternative. '
+                                'Parboiled Basmati Reis 5 kg')
+        self.assertEqual(value.value, 'parboiled')
+        self.assertEqual(value.status, TRUSTED)
+        self.assertIn('Parboiled Basmati Reis', value.evidence[0].quote)
+
+    def test_negated_ingredient_does_not_create_a_declaration_conflict(self):
+        card = B.evaluate(record(title='Weißer Basmati Reis',
+                                 ingredients='Non-parboiled Basmati Reis'))
+        self.assertEqual(card['grain_type'].value, 'white')
+        self.assertIsNone(card['declaration_conflict'])
+
+    def test_negated_title_does_not_override_affirmative_ingredients(self):
+        card = B.evaluate(record(title='Non-parboiled Basmati Reis',
+                                 ingredients='Parboiled Basmati Reis'))
+        # The milling verdict follows the affirmative ingredient declaration.
+        self.assertEqual(card['grain_type'].value, 'parboiled')
+        self.assertEqual(card['grain_type'].evidence[0].field, 'food.ingredients')
+
     def test_a_registered_variety_is_marked_as_such(self):
         value = self.cultivar(title='Taraori Basmati Reis 1 kg')
         self.assertIn('registered_cultivar', value.flags)
@@ -468,6 +488,34 @@ class Scoring(unittest.TestCase):
     def test_broken_rice_is_capped_on_grain_quality(self):
         detail = self.score(title='Basmati Bruchreis 5 kg')
         self.assertLessEqual(detail['parts']['grain'], 0.1)
+
+
+class ExternalAttribution(unittest.TestCase):
+    def result(self, **kwargs):
+        from amazon_scraper.validation import validate
+        return B.external_test(validate(record(
+            title='Tilda Pure Original Basmati Reis 5 kg', **kwargs)))
+
+    def test_substring_is_not_brand_identity(self):
+        result = self.result(brand='NotTilda',
+                             attributes={'manufacturer': 'TildaImitation GmbH'})
+        self.assertEqual(result.status, UNVERIFIED)
+
+    def test_title_alone_and_missing_identity_stay_unverified(self):
+        result = self.result(brand='', attributes={})
+        self.assertEqual(result.status, UNVERIFIED)
+        self.assertFalse(result.usable)
+
+    def test_exact_brand_and_manufacturer_carry_their_source_fields(self):
+        result = self.result(brand='Tilda', attributes={'manufacturer': 'TILDA Ltd.'})
+        self.assertEqual(result.status, TRUSTED)
+        self.assertEqual([(e.field, e.quote) for e in result.evidence[1:]],
+                         [('brand', 'Tilda'), ('attributes.manufacturer', 'TILDA Ltd.')])
+
+    def test_manufacturer_can_supply_missing_brand_identity(self):
+        result = self.result(brand='', attributes={'manufacturer': 'TILDA Ltd.'})
+        self.assertEqual(result.status, TRUSTED)
+        self.assertEqual(result.evidence[1].field, 'attributes.manufacturer')
 
 
 class Contract(unittest.TestCase):

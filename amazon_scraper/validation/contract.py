@@ -117,9 +117,11 @@ class Validated:
     #: text for claims; nothing generic reads it after validation.
     record: dict = field(default_factory=dict, repr=False)
 
-    def search(self, pattern, limit=3, fields=None):
-        """Evidence for `pattern` in this record's text, best source first."""
-        return search(self.record, pattern, limit=limit, fields=fields)
+    def search(self, pattern, limit=3, fields=None, *, scope='page',
+               affirmative=False, exclude=None):
+        """Search vendor text; see :func:`evidence.search` for scope/polarity."""
+        return search(self.record, pattern, limit=limit, fields=fields,
+                      scope=scope, affirmative=affirmative, exclude=exclude)
 
     def search_reviews(self, pattern, **kwargs):
         """Evidence for `pattern` in what *buyers* wrote, not the vendor.

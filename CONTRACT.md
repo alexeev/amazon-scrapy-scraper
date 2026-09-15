@@ -164,6 +164,53 @@ Value(value, status, unit, evidence=[Evidence(field, quote)], notes=[], source='
 `.usable` is true only for `trusted` values with a value. Nothing else may be
 ranked on or asserted from.
 
+### Attributed text search
+
+Both `search(record, pattern, limit=3, fields=None, *, scope='page',
+affirmative=False, exclude=None)` and `Validated.search(pattern, …)` return
+`Evidence` quotes in source order, with at most one accepted match per field.
+String patterns are case-insensitive; compiled regexes retain their flags.
+
+- `scope='page'` preserves the original discovery search: ingredients, title,
+  feature bullets, description, raw attribute rows, important information and
+  A+ text. Reviews have their own API. This is the extracted vendor text, not
+  every string in the JSON record or original HTML.
+- `scope='self'` restricts to `food.ingredients`, `title`, and `raw_tables`.
+  These are the conservative sources for what a listing contains. This field
+  policy does **not** guarantee that a title or attribute row is accurate or
+  mentions only the product being sold.
+- `fields` intersects the selected scope. Paths select themselves and their
+  descendants (`content.feature_bullets` includes indexed bullets); an empty
+  collection selects nothing. An unknown scope raises `ValueError`; a
+  nonpositive limit returns no hits.
+- `affirmative=True` filters adjacent German/English negating prefixes
+  (`nicht`, `non-`, `ohne`, `without`, `free of`, etc.) and `frei`/`free`
+  suffixes. It checks the context **outside the matched phrase**, so matching
+  `mineralöl` in `mineralölfrei` is rejected, while matching `mineralölfrei`
+  or `ohne Mineralöl` affirms the absence claim. Internal negation belongs to
+  the meaning of the caller's pattern; arbitrary grammar, double negations,
+  comparisons and cross-sell attribution are not resolved.
+- `exclude` supplies an optional category-specific regex, such as a drying
+  denial containing `trocknet nicht ein`. A candidate is rejected only when
+  its span overlaps an exclusion match, not because an unrelated negation
+  occurs elsewhere in the quote. Filtering runs against the full source text
+  before quote cropping or result limits, and continues to later matches in
+  the same field. Rejected matches remain discoverable with default search.
+
+Search returns evidence, never a trust status. Basmati uses `self` and
+affirmative matching for milling; mounting paste retains `page` search for
+claims in prose, with category exclusions and kit caveats. A page match alone
+does not resolve which product a claim concerns.
+
+External laboratory attribution stays in the basmati category. The known
+product-line match must also have a literal whole-brand match in the brand
+or manufacturer field to receive its existing `trusted` status. Those fields
+are included as evidence. A title-only match stays `unverified`; even matching
+metadata does not prove that the listing's batch or pack was the tested one.
+
+R7 adds these opt-in search controls within contract v1; the serialized
+validated record and extraction schema are unchanged.
+
 ### Status vocabulary
 
 | Status | Meaning |
@@ -172,7 +219,7 @@ ranked on or asserted from.
 | `disputed` | sources on the page contradict each other, or a check failed — shown with the contradiction, never ranked |
 | `unverified` | nothing contradicts it, nothing independent confirms it |
 | `unknown` | we do not know; distinct from "the page does not say" |
-| `not_claimed` | we searched every text field and the claim is not made — which is not the same as it being untrue |
+| `not_claimed` | no accepted claim in the caller's search scope — which is not the same as it being untrue |
 
 ### Source vocabulary
 

@@ -44,7 +44,7 @@ UNVERIFIED = 'unverified'
 # "we looked and found no claim" (see NOT_CLAIMED).
 UNKNOWN = 'unknown'
 
-# Only used by claims: we searched every text field and the claim is not made.
+# Only used by claims: no accepted match in the caller's search scope.
 # "Not claimed" is not "false" -- a producer may use a bronze die and never
 # mention it -- and the distinction has to survive into the output.
 NOT_CLAIMED = 'not_claimed'
@@ -217,24 +217,59 @@ def quote_around(text, start, end):
     return f'{prefix}{quote}{suffix}' if len(quote) < len(text) else quote
 
 
-def search(record, pattern, limit=3, fields=None):
+# Conservative attribution policy shared by the categories. Bullets and A+
+# can advertise other products; a field in SELF_FIELDS can still contain bad
+# seller metadata, so this policy never confers TRUSTED by itself.
+SELF_FIELDS = ('food.ingredients', 'title', 'raw_tables')
+_NEGATED_PREFIX = re.compile(
+    r'\b(?:non|nicht|nie|kaum|kein(?:e[nmrs]?)?|ohne|no|not|without'
+    r'|free\s+(?:of|from)|frei\s+von)[\s\-\u2010-\u2015]*$', re.I)
+_NEGATED_SUFFIX = re.compile(r'^[\s\-\u2010-\u2015]*(?:frei|free)\b', re.I)
+
+
+def _in_fields(name, fields):
+    return any(name == f or name.startswith(f + '[') or name.startswith(f + '.')
+               for f in fields)
+
+
+def search(record, pattern, limit=3, fields=None, *, scope='page',
+           affirmative=False, exclude=None):
     """Evidence for `pattern` across a record's text, best source first.
 
-    `fields`, when given, restricts the search -- a claim that is only
-    meaningful in the ingredient declaration should not be satisfied by a
-    marketing bullet.
+    ``scope='self'`` restricts to ingredients, title and raw attribute rows;
+    ``page`` (the default) preserves discovery across vendor text. ``fields``
+    intersects that scope. Neither includes reviews or proves attribution.
+
+    ``affirmative`` rejects adjacent German/English negation of the matched
+    phrase, not negation *inside* it: "ohne Mineralöl" can affirm oil freedom.
+    ``exclude`` is an optional regex for category-specific negated phrases;
+    only matches overlapping its spans are rejected. This is bounded pattern
+    matching, not a general language parser. Filtering uses full source text
+    before quoting/limiting, and continues past rejected mentions. As before,
+    return at most one accepted quote per field, in source order.
     """
+    if scope not in ('self', 'page'):
+        raise ValueError(f'unknown search scope: {scope!r}')
+    if limit <= 0:
+        return []
     regex = re.compile(pattern, re.I) if isinstance(pattern, str) else pattern
+    exclusion = re.compile(exclude, re.I) if isinstance(exclude, str) else exclude
     found = []
     for name, text in text_fields(record):
-        if fields is not None and not any(
-                name == f or name.startswith(f + '[') or name.startswith(f + '.')
-                for f in fields):
+        if scope == 'self' and not _in_fields(name, SELF_FIELDS):
             continue
-        match = regex.search(text)
-        if not match:
+        if fields is not None and not _in_fields(name, fields):
             continue
-        found.append(Evidence(name, quote_around(text, match.start(), match.end())))
+        excluded = [m.span() for m in exclusion.finditer(text)] if exclusion else []
+        for match in regex.finditer(text):
+            start, end = match.span()
+            if affirmative and (_NEGATED_PREFIX.search(text[:start])
+                                or _NEGATED_SUFFIX.search(text[end:])):
+                continue
+            if any(start < right and end > left for left, right in excluded):
+                continue
+            found.append(Evidence(name, quote_around(text, start, end)))
+            break
         if len(found) >= limit:
             break
     return found

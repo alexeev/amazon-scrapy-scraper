@@ -355,9 +355,8 @@ def is_bundle(validated):
 # the same listing separately states "Abtrocknungsverhalten: schnell
 # trocknend". Both sentences are on the page and both are true of the product;
 # only the second one answers the question this category asks. So negated hits
-# are dropped and the search goes deeper to find the ones behind them, rather
-# than the claim being decided by whichever sentence Amazon happened to print
-# first.
+# are dropped by shared search before quoting/limiting. These expressions are
+# category data; unrelated negations elsewhere in the field do not veto a hit.
 NEGATED = {
     'dries_out': re.compile(
         r'trocknet[^.]{0,20}\b(?:nicht|nie|kaum)\b'
@@ -368,12 +367,9 @@ NEGATED = {
 
 def stated(validated, claim):
     """The hits that survive this claim's own negations, best source first."""
-    negation = NEGATED.get(claim.key)
-    limit = 2 if negation is None else 6
-    hits = validated.search(claim.pattern, limit=limit, fields=claim.fields)
-    if negation is not None:
-        hits = [hit for hit in hits if not negation.search(hit.quote)]
-    return hits[:2]
+    return validated.search(claim.pattern, limit=2, fields=claim.fields,
+                            scope='page', affirmative=True,
+                            exclude=NEGATED.get(claim.key))
 
 
 def claims(validated):

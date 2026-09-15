@@ -207,12 +207,7 @@ GRAIN_TYPES = (
 # else. The cost is real and is the right way round: a rice that admits to
 # being sella only in its description is read as white and marked
 # `unverified`, which is a visible gap rather than a confident error.
-GRAIN_FIELDS = ('title', 'food.ingredients', 'raw_tables')
-
-#: "Non-parboiled", "nicht parboiled", "ohne Sella". Checked on the matched
-#: quote, because a negated claim is the opposite of the claim.
-NEGATION_RE = re.compile(r'\b(?:non|nicht|kein[e]?|ohne|no|free\s+of|frei\s+von)'
-                         r'[\s-]{0,2}$', re.I)
+# The validation contract owns this field scope and match-local negation.
 
 
 def grain_type(validated):
@@ -225,23 +220,13 @@ def grain_type(validated):
     "the page says nothing and white is the safe reading".
     """
     for key, pattern in GRAIN_TYPES:
-        hits = [hit for hit in validated.search(pattern, limit=3,
-                                                fields=GRAIN_FIELDS)
-                if not _negated(hit.quote, pattern)]
+        hits = validated.search(pattern, limit=1, scope='self', affirmative=True)
         if hits:
             return Value(key, TRUSTED, source='text', evidence=hits[:1])
     return Value('white', UNVERIFIED,
                  notes=['the page does not state the milling degree; plain '
                         'basmati is sold white, so that is the reading, but '
                         'nothing on the page confirms it'])
-
-
-def _negated(quote, pattern):
-    """True when the words immediately before the match negate it."""
-    match = re.search(pattern, quote, re.I)
-    if not match:
-        return False
-    return bool(NEGATION_RE.search(quote[:match.start()]))
 
 
 # ---------------------------------------------------------------------------
@@ -624,13 +609,18 @@ def external_test(validated):
     a measurement.
     """
     attributes = validated.record.get('attributes') or {}
-    identity = f'{validated.brand} {attributes.get("manufacturer") or ""}'
+    identity = [('brand', validated.brand),
+                ('attributes.manufacturer', attributes.get('manufacturer') or '')]
     for pattern, entry in EXTERNAL_RE:
         if not pattern.search(f'{validated.brand} {validated.title}'):
             continue
-        if re.search(entry['brand'], identity, re.I):
+        brand = re.compile(r'(?<!\w)' + re.escape(entry['brand']) + r'(?!\w)', re.I)
+        identity_evidence = [Evidence(field, text) for field, text in identity
+                             if brand.search(text)]
+        if identity_evidence:
             return Value(entry['verdict'], TRUSTED, source='published',
-                         evidence=[Evidence(entry['source'], entry['finding'])],
+                         evidence=[Evidence(entry['source'], entry['finding']),
+                                   *identity_evidence],
                          notes=[f'{entry["source"]}: {entry["finding"]}'])
         return Value(entry['verdict'], UNVERIFIED, source='published',
                      evidence=[Evidence(entry['source'], entry['finding'])],
@@ -910,9 +900,12 @@ def check_declaration(validated, grain):
     if not declared:
         return None
     for kind, pattern in DECLARATION_CONFLICT:
-        if kind == grain.value or not re.search(pattern, declared, re.I):
+        if kind == grain.value or not validated.search(
+                pattern, scope='self', fields=('food.ingredients',),
+                affirmative=True):
             continue
-        if re.search(pattern, validated.title or '', re.I):
+        if validated.search(pattern, scope='self', fields=('title',),
+                            affirmative=True):
             continue        # title and declaration agree; nothing to report
         return Value(
             kind, DISPUTED, source='structured',
