@@ -51,6 +51,7 @@ and it does so deliberately and visibly. See :func:`score`.
 
 import re
 
+from amazon_scraper.extraction.marketplaces import for_domain
 from amazon_scraper.validation import (CategoryProfile, DISPUTED, NOT_CLAIMED,
                                        TRUSTED, UNKNOWN, UNVERIFIED, Evidence,
                                        Value, validate)
@@ -73,16 +74,8 @@ NOT_RICE_BREADCRUMBS = ('fertiggerichte', 'kochboxen', 'haushaltsgeräte',
 # The title has to name basmati. A "Langkornreis" that merely sits next to
 # basmati in the search results is a different product, and the whole point of
 # this exercise is the difference.
-#
-# No trailing word boundary, and that is not sloppiness. German compounds the
-# noun: "Basmatireis" is one word, and `\bbasmati\b` does not match it. The
-# first draft had the boundary and silently classified out **AKASH
-# Basmatireis 1 x 10 kg** -- one of only two basmatis Stiftung Warentest
-# rated "gut" in its 5/2026 test, and the best-value one of the pair. A
-# grammatical detail of the marketplace's language removed the single
-# best-evidenced product on the shelf from the comparison, which is exactly
-# the failure mode a classifier is supposed to be tested against.
-BASMATI_RE = re.compile(r'\bbasmati', re.I)
+# The marketplace supplies the word boundaries in classify(): German must
+# accept "Basmatireis", while English uses the standalone word "basmati".
 
 # Product classes the rice searches return that are not a bag of dry rice.
 # `reiskocher` is the big one -- a search for "basmati reis 5kg" returns rice
@@ -137,11 +130,15 @@ def classify(record):
                          notes=[f'filed by Amazon under "{crumb}", which is '
                                 f'not dry rice'])
 
-    if not BASMATI_RE.search(title):
+    marketplace = for_domain(record.get('marketplace') or
+                             record.get('product_url') or
+                             record.get('canonical_url'))
+    basmati = re.compile(marketplace.word('basmati'), re.I)
+    if not basmati.search(title):
         # The ingredient declaration is allowed to rescue a title that does
         # not say the word -- some vendors title by brand alone.
         declared = ((record.get('food') or {}).get('ingredients') or {}).get('text') or ''
-        if not BASMATI_RE.search(declared):
+        if not basmati.search(declared):
             return Value('other', TRUSTED, evidence=evidence,
                          notes=['neither the title nor the ingredient '
                                 'declaration names basmati'])

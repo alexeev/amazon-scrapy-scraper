@@ -17,7 +17,7 @@ item, because the reasoning is what makes the current order defensible.
 | **R5** | Reviews as an evidence source | **DONE** (cost estimate was wrong — see below) |
 | **R6** | A command line for the things every category needs | **DONE** (two of four items were already shipped — see below) |
 | **R7** | Attributed search: finding a claim vs crediting it | **NEXT** |
-| **R8** | Marketplace-aware text matching | PLANNED |
+| **R8** | Marketplace-aware text matching | **DONE** |
 | **R9** | A second pass for missing prices | PLANNED (behind a decision test) |
 | **R10** | Scoring as a shared facility | **DEFERRED** — one consumer is not two |
 
@@ -687,25 +687,81 @@ lost and the known false ones gone, pinned by test.
 
 ## R8 — Marketplace-aware text matching
 
-**Status: PLANNED.** `\bword\b` is not a safe default on a compounding
-language.
+**Status: DONE.** The motivating bug was already fixed locally; R8 shares
+the boundary policy and makes reporting honest.
 
-German compounds the noun: **"Basmatireis" is one word**, and `\bbasmati\b`
-does not match it. Cost, measured: **36 of 239 listings (15%) silently
-classified out**, including `AKASH Basmatireis 1 × 10 kg` — one of only two
-basmatis Stiftung Warentest rated "gut" in 5/2026, and the cheaper of the two.
+### Scope review (2026-09-15)
 
-Nothing failed and nothing looked wrong: a wrongly rejected product is filed
-confidently as `other`, and the summary kept reporting `0 unclassified`. **That
-line reads as a health metric and is not one.**
+`basmati_rice.py` already uses `\bbasmati`, and
+`test_the_german_compound_noun_is_basmati` protects AKASH, Tilda and Alnatura
+titles. The original lost-listing count describes the first implementation,
+not the current classifier. Its denominator also differs between the old
+roadmap (239) and test commentary (216), so it is not a reproducible current
+acceptance measure. The saved `basmati_all.jsonl` now contains **359 records:
+239 classified basmati and 120 other products**.
+
+The remaining defect is that the German prefix rule also applies to English
+records. `Marketplace` already owns a language and `for_domain()` resolves
+profiles, but neither is used by this match. The summary still prints
+`0 unclassified` under “Corpus quality”; that measures whether a decision was
+made, not whether it was correct.
 
 ### Scope
 
-A `Marketplace.word(stem)` helper emitting `\bstem` for German and
-`\bstem\b` for English, so the decision sits beside the other locale
-decisions instead of in every category's regexes. Plus an honest name for the
-`0 unclassified` line, which measures only that the classifier reached a
-verdict.
+- Add `Marketplace.word(stem)`, returning a regex fragment for a non-empty
+  **literal** stem: leading word boundary for German, both boundaries for
+  English and other languages. Escape regex metacharacters; callers choose
+  case sensitivity. This is an opt-in prefix policy, not a German compound
+  parser: exclusions and negations remain the category's responsibility.
+- Use it for basmati in both titles and ingredient declarations. Resolve the
+  profile per record from `marketplace`, falling back to `product_url` or
+  `canonical_url` for legacy feeds and then the existing English fallback.
+  Follow the acquisition profile's language; do not infer language from text
+  or introduce a new locale override. R1 already gates conflicting crawls.
+- Label summary counts as **classification decisions**, with **no decision**
+  replacing **unclassified**, and state that accuracy is not measured.
+
+### Explicitly out of scope
+
+A blanket rewrite of category regexes; compound splitting; R7 attribution or
+negation work; changes to acquisition locale, extraction schema or marketplace
+validation. In particular the provisional `.it` profile is not repaired or
+validated by this milestone.
+
+### Done when
+
+- [x] German compounds and standalone English words match; English suffixes
+      and embedded stems do not, with literal escaping covered by tests.
+- [x] Basmati title and ingredient matching use each record's profile,
+      including mixed-marketplace input and legacy URL fallback.
+- [x] Every saved German basmati feed retains its complete classification
+      output, including evidence and notes; existing category and corpus
+      regressions pass.
+- [x] Summary tests distinguish decisions from accuracy and cover records
+      with no classification decision.
+
+### Measured on completion
+
+All **296 tests pass** (282 before R8), including extraction/validation corpus
+snapshots and all three category suites. The compound-title regression now
+uses an empty ingredient declaration, so a separate “Basmati Reis” ingredient
+cannot hide a broken title match.
+
+Offline before/after comparison of the full classification value, status,
+evidence and notes found **zero changes** across all five saved German feeds:
+
+| Feed | Record occurrences | Changed classifications |
+|---|---:|---:|
+| `basmati_all.jsonl` | 359 | 0 |
+| `basmati_brands.jsonl` | 243 | 0 |
+| `basmati_brands_v5.jsonl` | 243 | 0 |
+| `basmati_broad.jsonl` | 258 | 0 |
+| `basmati_broad_v5.jsonl` | 258 | 0 |
+
+The **1,361 occurrences overlap across feeds**, not 1,361 distinct products.
+The combined feed remains 239 basmati / 120 other / 0 no decision. English
+boundaries are covered by synthetic records, not a newly validated English
+marketplace crawl. No new acquisition or snapshot regeneration was needed.
 
 ---
 

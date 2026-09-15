@@ -109,7 +109,63 @@ class Classification(unittest.TestCase):
         for title in ('AKASH Basmatireis, 1er Pack (1 x 10 kg)',
                       'Tilda Pure Original Basmatireis 5kg',
                       'Alnatura Bio Himalaya Basmatireis weiß, 1kg'):
-            self.assertEqual(self.accepted(title=title), B.KEY, title)
+            self.assertEqual(self.accepted(title=title, ingredients=''),
+                             B.KEY, title)
+
+    def test_word_boundaries_follow_each_records_marketplace(self):
+        # Deliberately interleave profiles: no first-record or global locale.
+        for host, expected in (('amazon.de', B.KEY), ('amazon.com', 'other'),
+                               ('www.amazon.de', B.KEY),
+                               ('amazon.co.uk', 'other')):
+            with self.subTest(host=host):
+                self.assertEqual(self.accepted(
+                    title='AKASH Basmatireis 10 kg', ingredients='',
+                    marketplace=host), expected)
+                self.assertEqual(self.accepted(
+                    title='AKASH Extra Long 10 kg', ingredients='Basmatireis',
+                    marketplace=host), expected)
+
+    def test_english_standalone_word_matches_title_and_ingredients(self):
+        for host in ('amazon.com', 'amazon.co.uk'):
+            with self.subTest(host=host):
+                self.assertEqual(self.accepted(
+                    title='AKASH BASMATI rice', ingredients='',
+                    marketplace=host), B.KEY)
+                value = B.classify(record(
+                    title='AKASH Extra Long', ingredients='100% Basmati rice',
+                    marketplace=host))
+                self.assertEqual(value.value, B.KEY)
+                self.assertTrue(any(e.field == 'food.ingredients' and
+                                    e.quote == '100% Basmati rice'
+                                    for e in value.evidence))
+
+    def test_legacy_records_use_their_url_when_marketplace_is_missing(self):
+        for field in ('product_url', 'canonical_url'):
+            for host, expected in (('www.amazon.de', B.KEY),
+                                   ('www.amazon.com', 'other')):
+                with self.subTest(field=field, host=host):
+                    rec = record(title='Basmatireis', ingredients='')
+                    rec.pop('marketplace')
+                    rec.pop('product_url')
+                    rec[field] = f'https://{host}/dp/B000000000'
+                    self.assertEqual(B.classify(rec).value, expected)
+
+    def test_unknown_or_missing_marketplace_uses_english_boundaries(self):
+        for host in ('unknown.example', None, ''):
+            with self.subTest(host=host):
+                self.assertEqual(self.accepted(
+                    title='Basmatireis', ingredients='', marketplace=host,
+                    product_url='', canonical_url=''), 'other')
+                self.assertEqual(self.accepted(
+                    title='Basmati rice', ingredients='', marketplace=host,
+                    product_url='', canonical_url=''), B.KEY)
+
+    def test_embedded_stems_do_not_identify_basmati(self):
+        for host in ('amazon.de', 'amazon.com'):
+            with self.subTest(host=host):
+                self.assertEqual(self.accepted(
+                    title='Superbasmati rice', ingredients='Superbasmati',
+                    marketplace=host), 'other')
 
     def test_a_rice_cooker_is_not_rice(self):
         """Returned by "basmati reis 5kg" because its copy says both."""

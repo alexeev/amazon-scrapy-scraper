@@ -412,6 +412,21 @@ def evaluate(record):
     ...                                               # classify, hunt claims
 ```
 
+For language-sensitive word matching, use
+`amazon_scraper.extraction.marketplaces.for_domain(host).word(stem)` and
+compile the returned regex fragment with the flags you need, such as `re.I`.
+The stem is literal (regex characters are escaped). German profiles allow a
+compound suffix, so `basmati` finds `Basmatireis`; English profiles require
+the whole word. Both reject embedded stems such as `superbasmati`. This is
+an opt-in rule; category exclusions and negation still need their own logic.
+The basmati classifier selects the profile for each record from `marketplace`,
+then `product_url` or `canonical_url` for older feeds, with the existing
+English fallback when none resolves.
+
+The summary's **Classification decisions** line counts category matches,
+other products and records with **no decision**. It does not measure
+classification accuracy: an incorrect exclusion is still a decision.
+
 ### Offers, not listings
 
 When search returns two listings of one product in different boxes, ranking

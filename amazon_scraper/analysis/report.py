@@ -412,11 +412,13 @@ def summary_text(cards):
     matched = [card for card in cards if is_match(card)]
     other = [card for card in cards
              if card['category'].value == 'other']
-    unclassified = [card for card in cards if not card['category'].known]
+    undecided = [card for card in cards if not card['category'].known]
 
     lines = ['─' * WIDTH, f'Corpus quality · {category.label}', '─' * WIDTH,
-             f'  {len(cards)} records · {len(matched)} {category.label} · '
-             f'{len(other)} other products · {len(unclassified)} unclassified',
+             f'  Classification decisions: {len(cards)} records · '
+             f'{len(matched)} {category.label} · '
+             f'{len(other)} other products · {len(undecided)} no decision',
+             '  These counts report classifier decisions; accuracy is not measured.',
              '']
 
     for axis in category.axes:

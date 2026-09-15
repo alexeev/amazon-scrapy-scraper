@@ -229,6 +229,19 @@ class Marketplace:
 
     # -- lookups ----------------------------------------------------------
 
+    def word(self, stem):
+        """Regex fragment for a non-empty literal stem in this profile's language.
+
+        German permits a compound suffix (``basmati`` matches ``Basmatireis``);
+        other languages require a whole word. Both retain the leading boundary
+        to reject embedded stems. This opt-in rule does not parse compounds or
+        handle negation: callers still apply category exclusions and choose
+        regex flags such as ``re.I`` themselves.
+        """
+        if not stem or not stem.strip():
+            raise ValueError('word stem must not be empty')
+        return r'\b' + re.escape(stem) + ('' if self.language == 'de' else r'\b')
+
     @staticmethod
     def _normalise_label(label):
         return re.sub(r'\s+', ' ', (label or '').strip().strip(':').lower())

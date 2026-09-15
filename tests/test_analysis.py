@@ -163,6 +163,29 @@ class ContractUse(unittest.TestCase):
                 self.assertNotIn(forbidden, source)
 
 
+class SummaryDecisions(unittest.TestCase):
+
+    def test_summary_counts_decisions_without_claiming_accuracy(self):
+        cards = [evaluate(record()),
+                 evaluate(record(breadcrumbs=['Badausstattung'])),
+                 evaluate(record(breadcrumbs=[]))]
+        text = report.summary_text(cards)
+        self.assertIn('Classification decisions: 3 records', text)
+        self.assertIn('1 dry pasta', text)
+        self.assertIn('1 other products', text)
+        self.assertIn('1 no decision', text)
+        self.assertIn('accuracy is not measured', text)
+        self.assertNotIn('unclassified', text)
+
+    def test_all_decided_still_does_not_mean_correct(self):
+        text = report.summary_text([evaluate(record())])
+        self.assertIn('0 no decision', text)
+        self.assertIn('accuracy is not measured', text)
+
+    def test_empty_summary(self):
+        self.assertEqual(report.summary_text([]), 'No records.')
+
+
 class RealCases(unittest.TestCase):
     """Every rule, against the records that made it necessary."""
 
