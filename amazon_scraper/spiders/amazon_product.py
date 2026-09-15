@@ -143,6 +143,20 @@ class AmazonProductSpider(scrapy.Spider):
     previous search response has been parsed, so only one search request is
     ever outstanding. That keeps the ``/s?`` request rate close to the
     pattern the baseline validated, independently of scheduler behaviour.
+
+    ``asin`` fetches named products directly, with or without any search:
+
+        scrapy crawl amazon_product -a asin="B087WQJQDS; B086BX8M3C"
+        scrapy crawl amazon_product -a asin="https://www.amazon.de/dp/B086BX8M3C"
+
+    This exists because **search does not enumerate a shelf**. Measured on the
+    tyre mounting paste study: ten queries across four crawls, three of them
+    naming the brand outright, never once surfaced `B086BX8M3C` -- not in the
+    records and not in the discovery log, which keeps every sighting before
+    de-duplication. A reader found it by looking at the manufacturer's own
+    catalogue. A keyword crawl measures the queries at least as much as the
+    shelf, and without this argument the only way to check one named product
+    was to guess keywords until it appeared.
     """
 
     name = "amazon_product"
@@ -156,13 +170,21 @@ class AmazonProductSpider(scrapy.Spider):
 
     def __init__(self, keyword='spaghetti hartweizen', domain='www.amazon.de',
                  max_pages=2, max_products_per_query=0, keep_pages=1,
-                 *args, **kwargs):
+                 asin='', *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        self.seed_asins = self._parse_asins(asin)
+        # Naming ASINs and naming no queries means "just these products". The
+        # keyword default is a pasta query, and silently running it beside an
+        # explicit list of ASINs would be a surprise.
+        if self.seed_asins and 'keyword' not in kwargs:
+            keyword = keyword if str(keyword) != 'spaghetti hartweizen' else ''
+
         self.keywords = [k.strip() for k in str(keyword).split(';') if k.strip()]
-        if not self.keywords:
-            raise ValueError('keyword must contain at least one query')
-        self.keyword = self.keywords[0]
+        if not self.keywords and not self.seed_asins:
+            raise ValueError('keyword must contain at least one query, '
+                             'or asin at least one ASIN')
+        self.keyword = self.keywords[0] if self.keywords else ''
 
         # Accept "amazon.de", "www.amazon.de" or "https://www.amazon.de/".
         host = domain.strip().rstrip('/')
@@ -222,7 +244,8 @@ class AmazonProductSpider(scrapy.Spider):
             arguments={'keyword': self.keywords, 'domain': self.marketplace,
                        'max_pages': self.max_pages,
                        'max_products_per_query': self.max_per_query,
-                       'keep_pages': self.keep_pages},
+                       'keep_pages': self.keep_pages,
+                       'asin': self.seed_asins},
             keep_pages=self.keep_pages,
         ).open()
         self.logger.info('Run %s -> %s (locale %s, %s)', self.run.run_id,
@@ -262,8 +285,43 @@ class AmazonProductSpider(scrapy.Spider):
 
     # -- Crawl -------------------------------------------------------------
 
+    @staticmethod
+    def _parse_asins(argument):
+        """ASINs from a ``;``-separated list of ASINs or product URLs.
+
+        A URL is accepted because that is what a reader actually has in hand
+        when they ask whether a product was covered.
+        """
+        found = []
+        for item in str(argument or '').replace(',', ';').split(';'):
+            item = item.strip()
+            if not item:
+                continue
+            match = ASIN_RE.search(item) or BARE_ASIN_RE.fullmatch(item)
+            if not match:
+                raise ValueError(f'{item}: not an ASIN or a /dp/ URL')
+            asin = match.group(1) if match.re is ASIN_RE else match.group(0)
+            if asin not in found:
+                found.append(asin)
+        return found
+
     async def start(self):
-        yield self.search_request(0, 1)
+        for position, asin in enumerate(self.seed_asins, start=1):
+            self._seen_asins.add(asin)
+            # `search_query` is how every record says where it came from, and
+            # a named ASIN came from the person who named it. Saying so keeps
+            # the provenance honest rather than blank.
+            yield scrapy.Request(
+                url=self.product_url(asin),
+                callback=self.parse_product_data,
+                errback=self.handle_error,
+                dont_filter=True,
+                meta={'search_page': 0, 'asin': asin,
+                      'search_query': 'asin:' + asin,
+                      'search_position': position},
+            )
+        if self.keywords:
+            yield self.search_request(0, 1)
 
     def discover_product_urls(self, response):
         page = response.meta['search_page']

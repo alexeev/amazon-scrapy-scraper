@@ -169,6 +169,22 @@ SCRAPY_PROJECT=baseline uv run scrapy crawl amazon_product -a keyword="spaghetti
 There is no `activate` step and no `pip install`: `uv run` resolves the
 environment before every command, so it cannot silently drift from the lock.
 
+**It is slow on purpose: one request every ~9 seconds.** That is not the
+original baseline figure — it was 2 s — and it was raised after a measurement,
+three crawls of one shelf within an hour on 2026-09-15:
+
+| delay | requests | challenges | items | outcome |
+|---|---:|---:|---:|---|
+| 2 s | 21 | 18 | 2 | abandoned |
+| 9 s | 51 | 0 | 48 | finished |
+| 9 s | 56 | 0 | 53 | finished |
+
+At 2 s Amazon answered almost every product page with a captcha. A blocked
+crawl is not a slow crawl, it is no crawl — and it spends the requests anyway.
+9 s is a floor rather than a tuned optimum: nothing between 2 and 9 was
+measured. Lower it only with `amazon/challenge/*` from a run manifest in front
+of you.
+
 ### Optional: ScrapeOps proxy profile
 
 The default settings module (`amazon_scraper.settings`, i.e. no
@@ -223,9 +239,28 @@ SCRAPY_PROJECT=baseline scrapy crawl amazon_product \
 | Argument | Default | Meaning |
 |---|---|---|
 | `keyword` | `spaghetti hartweizen` | one or more `;`-separated search queries |
+| `asin` | — | one or more `;`-separated ASINs or `/dp/` URLs, fetched directly |
 | `domain` | `www.amazon.de` | marketplace host |
 | `max_pages` | `2` | search result pages per query |
 | `max_products_per_query` | `0` (no cap) | caps PDP discovery per query |
+
+#### Fetching named products
+
+```bash
+SCRAPY_PROJECT=baseline uv run scrapy crawl amazon_product -a asin="https://www.amazon.de/dp/B086BX8M3C; B087WQJQDS" -O data/named.jsonl
+```
+
+Naming ASINs and no `keyword` runs no search at all. Use it whenever you have
+a URL in hand, because **search does not enumerate a shelf**: on the tyre
+mounting paste study, thirteen queries across five crawls — three of them
+naming the brand outright — never surfaced `B086BX8M3C`, which is not an
+obscure product but a 50 ml tin from a major manufacturer. It was absent from
+the discovery log too, so it was never sighted and dropped; it simply never
+ranked. Its title is "Rema Tip Top 501004 - Schwammdose, Transparent, 50 ml",
+which contains no word anyone would search for.
+
+Records fetched this way carry `search_query: "asin:<ASIN>"`, so a report can
+always tell a product somebody asked about from one the crawl found.
 
 See **[CONTRACT.md](CONTRACT.md)** for the published record schema, the
 validated record built on it and the compatibility policy;
