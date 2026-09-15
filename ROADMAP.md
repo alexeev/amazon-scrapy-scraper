@@ -21,6 +21,34 @@ item, because the reasoning is what makes the current order defensible.
 | **R9** | A second pass for missing prices | PLANNED (behind a decision test) |
 | **R10** | Scoring as a shared facility | **DEFERRED** — one consumer is not two |
 
+## Agent-operation transition
+
+The reviewed [transition plan](AGENT_TRANSITION_PLAN.md) adds T0–T5 without
+replacing the R0–R10 history. Current operating rules are in
+[AGENTS.md](AGENTS.md), with a shared research workflow in
+[RESEARCH.md](RESEARCH.md) and a thin `CLAUDE.md` entry point.
+
+**T0 — DONE (2026-09-16): make the current system navigable.**
+
+- Added canonical instructions, the provider adapter, and a no-network research
+  walkthrough using the committed pasta cases, including a refusal example.
+- Replaced the stale README with current setup, architecture, supported scope,
+  commands and limitations. Corrected schema versions, `validated` profile
+  semantics, basmati rank/JSON claims, and original-report reproducibility claims.
+  Historical investigations now identify their age and current successors.
+- Removed `amazon_search` after the tracked-reference inventory found no import,
+  code consumer or test dependency outside the spider. The README explains the
+  migration to `amazon_product` and the different output/acquisition scope.
+- Verification: locked environment check succeeded with a writable local uv
+  cache; **323 tests passed**. All seven documented offline analysis commands
+  succeeded with the stated counts, evidence and refusals. Spider discovery
+  returned only `amazon_product`. PowerShell configuration and Git Bash POSIX
+  configuration/refusal commands passed; local documentation links and whitespace
+  checks passed. No extractor or trust-rule behavior changed.
+- Verification limits: used the existing Windows environment, not a fresh
+  Linux installation; no live crawl or model-provider acceptance trial was run.
+  Provider interchangeability trials remain T4. T1–T5 are not implemented.
+
 ---
 
 ## Decision principles
@@ -586,8 +614,10 @@ amazon_scraper.analysis <cmd> feed1.jsonl feed2.jsonl ...   # merge by ASIN
 ```
 
 Two of the four scripts were built. The other two were not, because they are
-already shipped under another name: `shortlist` is `rank`, and
-`cards ASIN ASIN` is `card`, which has always taken more than one.
+partly served under other names: `cards ASIN ASIN` is `card`, which takes more
+than one, and a one-axis shortlist is `rank`. **T0 correction:** `rank` does
+not reproduce a composite basmati shortlist; its basmati default is price per
+kg. The completion measurement below establishes the fusilli one-axis workflow.
 
 **Offline re-extraction was documented in README.md as a code sample** — proof
 that it worked, and a sign that it should be a command. It reads the
@@ -595,8 +625,9 @@ marketplace and locale from the run's own manifest rather than from a flag,
 because re-extracting a German page against an English label vocabulary is
 the silent under-extraction R1's locale gate exists for. `--feed` supplies
 what a stored page cannot know: which query found the product, where it
-ranked, and when it was fetched. Without it those fields are absent rather
-than invented.
+ranked, and when it was fetched. Without it search context is absent and
+fetch time falls back to filesystem mtime, which is not reliable freshness
+evidence after copying a page. T1 plans durable per-observation timestamps.
 
 **`fetched_at` is carried across, never refreshed.** A re-extraction stamped
 with today's clock would make every old page the freshest evidence in a study
@@ -620,7 +651,9 @@ traced back to a crawl.
 
 ### Measured on completion
 
-The fusilli study, reproduced from its three committed feeds:
+The fusilli study was reproduced from three local feeds at completion. These
+paths are **not committed inputs** in the current repository; use the
+[committed-case walkthrough](RESEARCH.md#offline-walkthrough) for onboarding:
 
 ```
 uv run python -m amazon_scraper.analysis rank \
@@ -897,7 +930,7 @@ It stays in `basmati_rice.py`.
 | Reviews | **DONE → R5** | Decision test passed at 57% against a 30% bar. Cost a tenth of the estimate: the data is in the retained PDP HTML, and the larger version is unavailable — `/product-reviews/` needs an account. |
 | Amazon.com completion | **DEFERRED → R4** | A stated user need for US research. |
 | Framework / runtime upgrade | **DEFERRED (maintenance)** | A product goal is blocked by the runtime. The last upgrade silently dropped an attribute table from two corpus pages; the corpus test is the gate. Never mix an upgrade with product work. |
-| `amazon_search.py` | **DROP — delete** | Never. Dead code with hardcoded `.com` URLs and a documented off-by-one; its presence misleads readers about the architecture. |
+| `amazon_search.py` | **REMOVED in T0** | No supported code/test consumer found in the tracked-reference inventory. Use `amazon_product`; see the [migration note](README.md#legacy-search-spider-migration) for its different feed shape and acquisition scope. |
 | Nutrition coverage beyond validation | **DEFERRED** | Never as a coverage goal. 44% is Amazon's ceiling, not the parser's. |
 
 ---

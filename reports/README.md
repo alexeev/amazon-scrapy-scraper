@@ -12,9 +12,20 @@ looks authoritative is worse than none. Keeping them out of git also keeps a
 repository about *how to compare products* from filling up with conclusions
 about particular ones.
 
-What is committed instead is everything needed to regenerate one: the category
-module under `amazon_scraper/analysis/categories/`, its tests, and the
-crawl evidence behind any roadmap decision under `data/evidence/`.
+What is committed is the category code, tests, selected category cases, and
+crawl evidence behind some roadmap decisions under `data/evidence/`. This is
+**not everything needed to regenerate each original report**: the complete
+briefs, feeds, external sources and reports are not all tracked. Do not infer
+reproducibility from a report name in the table below. The self-contained
+[offline walkthrough](../RESEARCH.md#offline-walkthrough) uses committed cases.
+
+Use [RESEARCH.md](../RESEARCH.md) for the current research and verification
+workflow. Until portable study bundles are implemented (T2/T3), keep a working
+note alongside a report with the question/constraints, assumptions, feed paths,
+run IDs, commands/options, code revision, source URLs and dates, verification
+results and unresolved limits. Ignored local output is not automatically backed
+up. Keep dated notes/revisions when refreshing a report so its old evidence is
+not silently overwritten.
 
 ## Convention
 
@@ -26,7 +37,7 @@ crawl evidence behind any roadmap decision under `data/evidence/`.
 | Cite per claim | every figure traceable to a record, a quote or an external source |
 | Say "unknown" | absence of data is not an adverse finding, and must not be dressed as one |
 
-## Reports so far
+## Historical reports (not included in this checkout)
 
 | Report | Question | Category module |
 |---|---|---|

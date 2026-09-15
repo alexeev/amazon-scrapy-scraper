@@ -1,5 +1,15 @@
 # Using this platform for a real research question — what worked, what cost time
 
+> **Historical basmati postmortem, with later roadmap annotations.** The
+> measurements below describe that study, not current marketplace facts.
+> For current commands use [RESEARCH.md](RESEARCH.md). R6 now provides offline
+> replay and multi-feed analysis; R7 and R8 are shipped. The historical claim
+> that `rank` also replaces the composite shortlist script was too broad:
+> basmati `rank` uses price per kg, and its JSON card omits material extras.
+> The original complete study inputs/report are not all committed. T0 documents
+> these limits; T2/T3 in the [transition plan](AGENT_TRANSITION_PLAN.md) address
+> complete analysis exports and report reproducibility.
+
 Written immediately after answering one: *"find the best dry basmati rice on
 Amazon.de for regular home use"*, start to finish, on a repository that had
 never seen a grain of rice. Everything below is a measurement or a thing that
@@ -201,12 +211,11 @@ amazon_scraper.analysis shortlist <feeds> --category X --limit N
 amazon_scraper.analysis cards <feeds> ASIN ASIN ASIN
 ```
 
-The first two were built. The last two were not, and the reason is worth
-recording: **they already existed under another name.** `shortlist` is `rank`,
-and `cards ASIN ASIN` is `card`, which has always accepted more than one ASIN.
-Two of the four scripts were written not because the capability was missing
-but because the command that had it was not the one I went looking for — which
-is a naming and documentation finding, not a missing-feature one.
+The first two were built. Multi-ASIN evidence output already exists as `card`
+rather than `cards ASIN ASIN`. A one-axis shortlist is `rank`; it does **not**
+replace the composite basmati ranking script. The earlier description of all
+four needs as resolved confused those two shortlist methods. The fusilli
+reproduction below verifies price-per-kg ranking only.
 
 **Done when** the basmati shortlist (kept locally under `reports/`, which is
 gitignored — see `reports/README.md`) is reproducible with shipped commands and

@@ -1,9 +1,12 @@
 # Transition to an agent-operated research repository
 
-**Status: proposed transition plan; implementation has not started.**  
-Assessed on 2026-09-16 at commit `95b8bbd`. This document proposes changes to
-the operating model; it does not replace the current contract or mark roadmap
-work complete.
+**Status: reviewed and adopted; T0 implemented, T1–T5 remain planned.**
+
+The assessment below records the repository at commit `95b8bbd` on 2026-09-16;
+findings describe that snapshot, including documentation gaps now addressed by
+T0. See [ROADMAP.md](ROADMAP.md#agent-operation-transition) for implementation
+evidence and [AGENTS.md](AGENTS.md) / [RESEARCH.md](RESEARCH.md) for current
+operation. This plan does not replace the data contract.
 
 ## Recommendation
 
@@ -475,6 +478,11 @@ Implement each stage as small reviewable changes. The identifiers below are
 transition stages, not replacements for the existing R0–R10 history.
 
 ### T0 — Make the current system navigable
+
+**Status: DONE (2026-09-16).** Shared instructions, thin provider adapter,
+current runbook and verified offline example are shipped. The legacy search
+spider is removed with a migration note. See the
+[roadmap verification record](ROADMAP.md#agent-operation-transition).
 
 **Changes:** Add canonical instructions, the thin adapter, and the research
 runbook. Correct the current documentation contradictions. State supported

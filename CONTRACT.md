@@ -5,7 +5,7 @@ before either of those changes. Two artefacts are published here:
 
 | Artefact | Version | Produced by | Answers |
 |---|---|---|---|
-| **Product record** | `SCHEMA_VERSION = 5` | `amazon_scraper.extraction` | what the page says |
+| **Product record** | `SCHEMA_VERSION = 6` | `amazon_scraper.extraction` | what the page says |
 | **Validated record** | `CONTRACT_VERSION = 1` | `amazon_scraper.validation` | how much of that holds up |
 
 They are versioned separately because they change for different reasons and
@@ -15,7 +15,7 @@ moves the second.
 
 ```text
 extraction  ──►  validation  ──►  category analysis  ──►  report
-schema v5        contract v1      analysis/categories/    analysis/report.py
+schema v6        contract v1      analysis/categories/    analysis/report.py
 ```
 
 ---
@@ -50,7 +50,7 @@ So v4 removes `confidence` and the contract splits it in two:
 
 ---
 
-## 2. The product record (schema v5)
+## 2. The product record (schema v6)
 
 One JSON object per line. Every group degrades to `{}` / `[]` rather than
 disappearing, so consumers can index without guards.
@@ -75,6 +75,10 @@ disappearing, so consumers can index without guards.
 
 `nutrition.source` is one of `nutrition_card`, `attributes`, or `text:<field>`
 — **which structure the numbers came from, and nothing more**.
+
+In schema v6, `price.range` retains the bounds when the page presents a price
+range. `price.amount` is then absent: one end of a range is not the price of a
+selected offer. See §7 for the migration history.
 
 ### `reviews` — one complete structure and one sample, never confused
 
@@ -118,6 +122,13 @@ inferred from any volume field present, which reported a 50 ml sponge tin as
 
 `amazon_scraper.validation.validate(record, profile) -> Validated`
 
+The Python API defaults to a neutral profile when called as `validate(record)`;
+the saved-page corpus pins this neutral output. The `analysis validated` CLI
+instead supplies the selected category's profile (default `dry_pasta`), applying
+its plausibility bands without running its classifier or claim evaluator. It
+has no neutral-profile switch. See [RESEARCH.md](RESEARCH.md#offline-walkthrough)
+for an executable example.
+
 ```python
 from amazon_scraper.validation import validate, CategoryProfile
 
@@ -142,6 +153,10 @@ validated.as_dict()              # JSON-serialisable, snapshot-tested
 | `review_rating` | `Value` | average stars; `trusted` only when the histogram corroborates it and the rating count is not trivially small |
 | `review_negative_share` | `Value` | share of all ratings at 1–2★, from the complete histogram — the only review figure entitled to be read as a rate |
 | `review_sample` | `Value` | the rendered cards; **never better than `unverified`**, carrying every caveat that limits reading them |
+| `record` | dict | the raw record used for category text search; not included by `as_dict()` |
+
+`as_dict()` also omits the raw `variation` matrix and serializes `review_sample`
+as its count plus status/evidence, rather than duplicating all review text.
 
 `Validated` also exposes `search_reviews(pattern, …)` and
 `review_signal(pattern, label, …)`, kept deliberately separate from `search()`,
@@ -149,11 +164,10 @@ which walks the *vendor's* words. A producer's claim and a reader's experience
 of it are different kinds of evidence, and a hunter that merged them would let
 marketing copy corroborate itself.
 
-The asymmetry between the two is the part worth stating: a vendor controls the
-whole page, so a claim absent from it is `not_claimed` — weak evidence, but
-evidence. Buyers control nothing, since Amazon selects which cards to render,
-so a complaint absent from the sample is `unknown`.
-| `record` | dict | the record it was built from, for category text search |
+For vendor claims, `not_claimed` means no accepted match in the selected search
+scope, not that the property is false or that every possible source was checked.
+Amazon selects which buyer cards to render, so a complaint absent from that
+sample is `unknown`.
 
 ### `Value`
 
@@ -163,6 +177,15 @@ Value(value, status, unit, evidence=[Evidence(field, quote)], notes=[], source='
 
 `.usable` is true only for `trusted` values with a value. Nothing else may be
 ranked on or asserted from.
+
+The status applies to the proposition being checked. A category can mark a
+vendor declaration `trusted` because it found attributable text; this does not
+independently verify the claimed performance. Likewise, histogram agreement
+checks rating consistency, not review authenticity or product quality. Reports
+must preserve this distinction and the source attribution. Basmati's optional
+composite is a separate category method, not a generic trusted numeric axis;
+its ingredients and unknowns must remain visible, and the CLI `rank` does not
+sort by that score.
 
 ### Attributed text search
 

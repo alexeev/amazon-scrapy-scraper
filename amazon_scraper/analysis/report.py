@@ -1,16 +1,17 @@
 """Rendering: evidence cards, comparisons, rankings and a corpus summary.
 
-The output format is a product decision, not a presentation detail. Nothing
-here emits a quality score, and the reason is measurable in both categories
-shipped. For dry pasta, price per kg is disputed or unknown on a real
-fraction of records, plausible protein exists on a third, bronze-die claims on
+The generic ranking uses one declared axis. A category may render extra
+sections on a text card, including basmati's composite score, but that score
+is not a generic ranking axis. For dry pasta, price per kg is disputed or
+unknown on a real fraction of records, plausible protein exists on a third,
+bronze-die claims on
 about a third; for tyre mounting paste the criterion that decides the whole
 purchase is stated on 3 of 43 listings. A single number computed over that
 would be a confident answer built on inputs that are partly wrong and mostly
 missing -- and it could not answer "why is A better than B", which is the
 whole point.
 
-So the unit of output is an evidence card, and the unit of comparison is a
+The unit of output is an evidence card, and the unit of comparison is a
 difference with the quote behind it. Missing data is shown as missing.
 
 Everything below is driven by the category's own descriptor -- its axes, their

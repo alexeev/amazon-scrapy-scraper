@@ -1,5 +1,13 @@
 # Rich PDP extraction layer — technical report
 
+> **Historical investigation and measurements (2026-09-14/15).** Schema tables,
+> examples, runtime commands, and next steps below describe their recorded
+> stages. The current extraction schema is **6**; [CONTRACT.md](CONTRACT.md)
+> owns its semantics and [RESEARCH.md](RESEARCH.md) owns current operation.
+> Reviews, offline replay, attributed search and locale-aware matching have
+> since shipped (R5–R8). T0 removed `amazon_search`; references to it below
+> describe the old implementation. Old throughput figures are not pacing advice.
+
 Scope: replace the baseline's handful of PDP selectors with a structured,
 marketplace-aware extraction layer, and produce evidence that it works on real
 amazon.de product pages. The validated `search → pagination → PDP → JSONL`

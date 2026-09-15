@@ -6,7 +6,10 @@
 > results stay reproducible in context; for how to set up and run the project
 > today see [README.md](README.md). The move to Python 3.14 / Scrapy 2.19
 > re-verified extraction against these numbers and changed none of them. The
-> crawl behaviour described here, including the search pacing, is unchanged.
+> sequential search structure remains, but baseline pacing was subsequently
+> raised to a 9-second configured delay after challenge measurements. T0 also
+> removed the legacy `amazon_search` spider. Use [RESEARCH.md](RESEARCH.md) for
+> current bounded commands; the old rates and spider list below are historical.
 
 Scope: verify that this existing Scrapy project can traverse
 `search → pagination → PDP → JSONL` on **amazon.de**, from a local machine,

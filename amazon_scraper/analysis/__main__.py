@@ -108,8 +108,9 @@ def main(argv=None):
           file=sys.stderr if machine_readable else sys.stdout)
 
     if args.command == 'validated':
-        # The contract itself, with no category interpretation on top. This is
-        # what a new analyzer starts from, and what the corpus test pins.
+        # Validation with the selected category's plausibility profile, without
+        # its classifier or claim evaluation. Corpus snapshots instead call
+        # validate(record) without a profile to pin neutral validation.
         from ..validation import validate
         for record in records:
             print(json.dumps(validate(record, category.profile).as_dict(),
