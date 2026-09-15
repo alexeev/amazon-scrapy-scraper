@@ -42,16 +42,35 @@ DOWNLOADER_MIDDLEWARES = {
 CONCURRENT_REQUESTS = 1
 CONCURRENT_REQUESTS_PER_DOMAIN = 1
 
-DOWNLOAD_DELAY = 2.0
+# 9 seconds, not the 2 this profile was validated at. Measured on 2026-09-15,
+# three crawls of the same shelf within one hour:
+#
+#   delay  requests  challenges  items
+#   2.0    21        18          2       abandoned
+#   9.0    51         0         48       finished
+#   9.0    56         0         53       finished
+#
+# At 2 s Amazon answered almost every product page with a captcha, and the
+# crawl produced two usable records before it was stopped. The same queries at
+# 9 s ran to completion without a single challenge. A blocked crawl is not a
+# slow crawl -- it is no crawl, and it costs Amazon the requests anyway.
+#
+# This is a floor rather than a tuned optimum: 9 s is the first value tried
+# after 2 s failed, and nothing between them was measured. Lower it only with
+# `amazon/challenge/*` in the run manifest in front of you.
+DOWNLOAD_DELAY = 9.0
 # Scrapy 2.19 replaced the RANDOMIZE_DOWNLOAD_DELAY toggle with an explicit
 # magnitude. 0.5 is what the old toggle meant, so the delay still varies
 # uniformly between 0.5x and 1.5x of DOWNLOAD_DELAY, as during validation.
 DOWNLOAD_DELAY_JITTER = 0.5
 
 AUTOTHROTTLE_ENABLED = True
-AUTOTHROTTLE_START_DELAY = 2
-AUTOTHROTTLE_MAX_DELAY = 20
-AUTOTHROTTLE_TARGET_CONCURRENCY = 0.5
+AUTOTHROTTLE_START_DELAY = 9
+AUTOTHROTTLE_MAX_DELAY = 30
+# 0.3 rather than 0.5: autothrottle targets an *average* concurrency, and at
+# 0.5 it shortens the delay again as soon as Amazon answers quickly -- which
+# it does, right up until it answers with a captcha instead.
+AUTOTHROTTLE_TARGET_CONCURRENCY = 0.3
 
 COOKIES_ENABLED = True
 
